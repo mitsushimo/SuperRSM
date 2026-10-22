@@ -4,6 +4,8 @@ This project provides an extensible Python-based tool with a Graphical User Inte
 
 Unlike single-method tools, **Super RSM** supports multiple regression methods—including **Gaussian Process Regressor (Kriging)**, **Ridge Regression (RidgeCV)**, and **Genetic Programming (Symbolic Regression)**—within an extensible architecture that makes adding future regression models straightforward, while inheriting advanced multi-dimensional contour plot configurability.
 
+![alt text](readme_images/image.png)
+
 ---
 
 ## Features
@@ -31,25 +33,33 @@ Unlike single-method tools, **Super RSM** supports multiple regression methods�
 ## Getting Started
 
 ### Prerequisites
-Make sure you have Python 3 installed along with the following packages:
-- `numpy`
-- `scipy`
-- `pandas`
-- `scikit-learn`
-- `matplotlib`
-- `seaborn`
-- `openpyxl` (if reading `.xlsx` files)
-- `gplearn` (for Genetic Programming / symbolic regression)
+Make sure you have Python 3 installed (Python 3.9+ recommended).
 
-You can install the required packages using pip:
+The required third-party packages are:
+- `numpy`: Numerical operations and linear algebra
+- `scipy`: Optimization and linear constraint handling
+- `pandas`: Tabular data loading and manipulation
+- `scikit-learn`: Gaussian Process and Ridge regression, scaling, and evaluation metrics
+- `matplotlib`: Multi-dimensional contour plots and visual layouts
+- `seaborn`: Plot styling and aesthetics
+- `openpyxl`: Excel spreadsheet (`.xlsx`) support
+- `gplearn`: Genetic Programming / symbolic regression
+
+*(Note: `tkinter` is used for the GUI and is included by default with standard Python installations.)*
+
+### Installation
+Install all dependencies using the provided `requirements.txt`:
+```bash
+pip install -r requirements.txt
+```
+
+Alternatively, you can install them directly:
 ```bash
 pip install numpy scipy pandas scikit-learn matplotlib seaborn openpyxl gplearn
 ```
 
-*(Note: `tkinter` is used for the GUI and is included by default with standard Python installations.)*
-
 ### Running the Application
-To launch the GUI, navigate to the `Code` directory and run:
+To launch the GUI, run:
 ```bash
 python rsm_gui.py
 ```
