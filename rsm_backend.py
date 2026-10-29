@@ -219,14 +219,31 @@ class rsm_result:
             return self.model.predict(X_eval, return_std=True)
         return self.model.predict(X_eval)
 
-    def optimize(self, initial_guess=None, bounds=None, constraints=None):
+    def evaluate_point(self, params, return_std=False):
         """
-        Optimize the fitted response surface model to find the input parameters that minimize the output.
+        Evaluate the fitted response surface model at a single point and return scalar float(s).
+        Returns (y_val, std_val) if return_std is True, otherwise y_val.
+        """
+        if return_std and self.supports_uncertainty:
+            y_pred, sigma = self.target_func(params, return_std=True)
+            y_val = float(np.asarray(y_pred, dtype=float).ravel()[0])
+            std_val = float(np.asarray(sigma, dtype=float).ravel()[0])
+            return y_val, std_val
+        y_pred = self.target_func(params, return_std=False)
+        y_val = float(np.asarray(y_pred, dtype=float).ravel()[0])
+        if return_std:
+            return y_val, None
+        return y_val
+
+    def optimize(self, initial_guess=None, bounds=None, constraints=None, maximize=False):
+        """
+        Optimize the fitted response surface model to find the input parameters that minimize or maximize the output.
         initial_guess: Initial guess for the optimization.
         bounds: Bounds for the optimization (optional).
         constraints: Constraints for the optimization (optional). Can be a LinearConstraint,
                      a dict, or a list of constraints for scipy.optimize.minimize.
-        Returns the optimized parameters and the corresponding minimum output value.
+        maximize: If True, maximizes the output instead of minimizing (default False).
+        Returns the optimized parameters and the corresponding optimal output value.
         """
         if initial_guess is None:
             initial_guess = np.zeros(self.X_test.shape[1])
@@ -237,10 +254,18 @@ class rsm_result:
         if constraints is not None:
             kwargs['constraints'] = constraints
 
-        result = minimize(self.target_func, initial_guess, **kwargs)
-        self.last_opt_result = result
+        if maximize:
+            def objective(p):
+                return -float(np.asarray(self.target_func(p), dtype=float).ravel()[0])
+        else:
+            objective = self.target_func
 
-        opt_fun = result.fun.item() if hasattr(result.fun, 'item') and getattr(result.fun, 'ndim', 0) > 0 else float(result.fun)
+        result = minimize(objective, initial_guess, **kwargs)
+        self.last_opt_result = result
+        self.last_opt_maximize = bool(maximize)
+
+        raw_fun = result.fun.item() if hasattr(result.fun, 'item') and getattr(result.fun, 'ndim', 0) > 0 else float(result.fun)
+        opt_fun = -raw_fun if maximize else raw_fun
         return result.x, opt_fun
 
     def visualize_rsm(self, config, title="Function Visualization", xlabel="X", ylabel="Y", label_array=None, plot_settings=None):
@@ -464,11 +489,25 @@ if __name__ == "__main__":
         print("Fitted Model:")
         print(result)
 
-        # Run RSM optimization starting from initial guess [0.0, 0.0]
-        opt_params, opt_val = result.optimize(initial_guess=np.zeros(2))
-        print("Optimization Results:")
+        # Evaluate at known minimum point
+        eval_val, eval_std = result.evaluate_point(known_min_coords, return_std=True)
+        print(f"Evaluated at {known_min_coords}: y = {eval_val:.6f} (std = {eval_std})")
+
+        # Run RSM minimization starting from initial guess [0.0, 0.0]
+        opt_params, opt_val = result.optimize(initial_guess=np.zeros(2), maximize=False)
+        print("Minimization Results:")
         print(f"Optimized parameters: {opt_params} (Expected: {known_min_coords})")
         print(f"Optimized minimum value: {opt_val:.6f} (Expected: {known_min_val:.6f})")
+
+        # Run RSM maximization within [0, 10]^2 bounds
+        max_params, max_val = result.optimize(
+            initial_guess=np.array([5.0, 5.0]),
+            bounds=[(0.0, 10.0), (0.0, 10.0)],
+            maximize=True,
+        )
+        print("Maximization Results (within [0, 10]^2):")
+        print(f"Maximized parameters: {max_params}")
+        print(f"Maximized output value: {max_val:.6f}")
 
         if result.coeffs is not None:
             terms = generate_term_strings(['x0', 'x1'], result.model)

@@ -1,6 +1,6 @@
 # Super RSM: Multi-Method Response Surface Methodology Analysis & Visualization Tool
 
-This project provides an extensible Python-based tool with a Graphical User Interface (GUI) designed to fit Response Surface Models (RSM) to experimental or simulated datasets and find the optimal input parameters to minimize a target output variable.
+This project provides an extensible Python-based tool with a Graphical User Interface (GUI) designed to fit Response Surface Models (RSM) to experimental or simulated datasets, evaluate surrogate predictions at user-specified points, and find the optimal input parameters to minimize or maximize a target output variable.
 
 Unlike single-method tools, **Super RSM** supports multiple regression methods—including **Gaussian Process Regressor (Kriging)**, **Ridge Regression (RidgeCV)**, and **Genetic Programming (Symbolic Regression)**—within an extensible architecture that makes adding future regression models straightforward, while inheriting advanced multi-dimensional contour plot configurability.
 
@@ -14,9 +14,13 @@ Unlike single-method tools, **Super RSM** supports multiple regression methods�
   - **Ridge Regression (RidgeCV)**: Fast cross-validated L2-regularized polynomial fitting with automatic unscaling and extraction of polynomial term coefficients.
   - **Genetic Programming (Symbolic Regression)**: Evolutionary symbolic regression powered by `gplearn` (`SymbolicRegressor`) that discovers closed-form mathematical equations and relationships directly from data, complete with support for standard arithmetic functions and custom functions (e.g., piecewise).
 - **Extensible Architecture**: Built with a modular registry pattern (`MODEL_REGISTRY` & `register_model`), allowing new regression models to be integrated into the backend and GUI seamlessly.
+- **Decoupled Model Fitting & Downstream Analysis**:
+  - Fit the surrogate model once (**Fit Surrogate Model**) to immediately inspect fit diagnostics ($R^2$, MSE, RMSE, polynomial coefficients, or symbolic equations), and then perform repeated optimizations, point evaluations, or contour visualizations without re-fitting the model.
+- **Interactive Surrogate Model Point Evaluation**:
+  - Dedicated **Evaluate Model** tab to evaluate the fitted surrogate model at any specified combination of input parameters (with quick-fill shortcuts for the Optimal Solution or Dataset Mean), displaying both the predicted response and predictive uncertainty ($\pm 1\sigma$ and 95% confidence interval for uncertainty-capable models) along with a comparison history table.
 - **Graphical User Interface (GUI)**:
   - Intuitive interface for loading data (`.csv` and `.xlsx`).
-  - Column selection, dynamic optimization bounds specification, polynomial degree adjustment, and test-ratio configuration.
+  - Column selection, dynamic optimization bounds specification, optimization goal dropdown (`Minimize` / `Maximize`), polynomial degree adjustment, and test-ratio configuration.
   - Automatic adaptation of results (displaying coefficients for polynomial models like RidgeCV, or mathematical expressions for Genetic Programming).
 - **Advanced Plot Configuration & Visualization**:
   - High-dimensional contour and multi-panel ($P \times Q$) subplot visualization powered by `high_d_plotter.py`.
@@ -24,7 +28,8 @@ Unlike single-method tools, **Super RSM** supports multiple regression methods�
   - **Granular Styling Controls**: Full customization of axes, colormaps (`cmap`), uniform color scaling across subplots, colorbars and labels, transparency (`alpha`), contour fill/line levels, inline contour labels, grids, and scatter marker appearance (size, face color, edge color, and marker style).
   - **Predictive Uncertainty Mapping**: Dedicated secondary uncertainty contour plot generation for uncertainty-capable models (e.g., Gaussian Process), with automatic GUI state handling when switching models or loading settings profiles.
   - **Profile Management**: Save and load complete plot configuration profiles (parameter roles, labels, and advanced styling/scatter settings) as `.json` files.
-- **Continuous & Constrained Optimization**: Scipy-powered numerical optimization to identify optimal input parameters that minimize target responses. Supports:
+- **Continuous & Constrained Optimization (Minimize or Maximize)**: Scipy-powered numerical optimization to identify optimal input parameters that either **minimize** or **maximize** target responses. Supports:
+  - **Optimization Goal Selection**: Choose between `Minimize` and `Maximize` via the GUI dropdown menu or `maximize=True/False` in `rsm_result.optimize()`.
   - **Rectangular Bounds**: Parameter-specific lower and upper limits.
   - **Nonrectangular Linear Constraints**: Arbitrary linear combinations of variables ($\sum c_i x_i \le b$, $\ge b$, or $= b$) configured through an interactive GUI constraint builder or passed directly via `scipy.optimize.LinearConstraint` in the backend.
 
@@ -69,12 +74,13 @@ python rsm_gui.py
 ## GUI Instructions
 
 1. **Load Data**: Browse and load your dataset (`.csv`, `.xlsx`, or `.xls`).
-2. **Select Columns**: Choose one or more input independent variables and one target output response variable.
-3. **Optimization Bounds (Optional)**: Specify minimum and maximum parameter ranges for individual variables.
-4. **Linear Constraints (Optional)**: Click `"Add a constraint"` to define coupled linear constraints across variables (e.g., $1.0 \times \text{Var}_1 + 2.0 \times \text{Var}_2 \le 50.0$) with live algebraic expression preview. Manage multiple constraints via the interactive list (Add, Edit, Delete, Clear).
-5. **Model Settings**: Choose the regression method (`Gaussian Process`, `RidgeCV`, or `Genetic Programming`), polynomial degree, and test data ratio.
-6. **Run RSM Optimization**: Click to fit the model, display $R^2$, MSE, RMSE, model coefficients (for `RidgeCV`) or discovered mathematical expressions (for `Genetic Programming`), optimized parameter values, and a constraint verification report evaluating all defined linear constraints at the optimal solution.
-7. **Configure Plot**: Open the plot configuration window to customize multi-dimensional contour visualizations across three tabs:
+2. **Select Variables**: Choose one or more input independent factors and one target output response variable.
+3. **Model & Fit Settings**: Choose the regression method (`Gaussian Process`, `RidgeCV`, or `Genetic Programming`), polynomial degree, and test data ratio, then click **"▶ Fit Surrogate Model"**. This immediately displays the fit diagnostics ($R^2$, MSE, RMSE, model coefficients for `RidgeCV`, or discovered mathematical expressions for `Genetic Programming`) and unlocks optimization, point evaluation, and plotting without requiring subsequent refits.
+4. **Optimization Goal & Bounds (Optional)**: Select the **Optimization Goal** (`Minimize` or `Maximize`) from the dropdown menu, and optionally specify minimum and maximum parameter ranges for individual variables.
+5. **Linear Constraints (Optional)**: Click `"+ Add Constraint"` to define coupled linear constraints across variables (e.g., $1.0 \times \text{Var}_1 + 2.0 \times \text{Var}_2 \le 50.0$) with live algebraic expression preview. Manage multiple constraints via the interactive list (Add, Edit, Delete, Clear).
+6. **Run Optimization**: Click **"▶ Run Optimization"** to find the parameter combination that minimizes or maximizes the fitted surrogate model subject to your bounds and linear constraints (reusing the already-fitted model without refitting). View the optimal parameters and constraint verification report in the **Optimal Solution & Constraints** and **Model Equation & Full Report** tabs.
+7. **Evaluate Model (Point Evaluation)**: Open the **Evaluate Model** tab to evaluate the fitted surrogate model at any custom combination of input parameters (or use **Fill from Optimal Solution** / **Fill with Data Mean**), view the predicted output and uncertainty ($\pm 1\sigma$ and 95% CI when supported), and compare multiple evaluated points in the history table.
+8. **Configure Plot**: Open the plot configuration window to customize multi-dimensional contour visualizations across three tabs:
    - **Roles Tab**: Assign each input parameter a role:
      - `X-Axis` / `Y-Axis`: Primary 2D contour axes (specify `Min`, `Max`, and grid `Steps`).
      - `Row-Axis (P)` / `Column-Axis (Q)`: Optional subplot grid dimensions for visualizing 3D/4D+ slices (specify comma-separated values).

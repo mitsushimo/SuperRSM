@@ -576,17 +576,22 @@ class RSMGui(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Super RSM — Response Surface Optimization & Visualization")
-        self.geometry("1160x800")
-        self.minsize(940, 660)
+        self.geometry("1160x820")
+        self.minsize(940, 680)
 
         self.fonts = configure_ttk_styles(self)
 
         self.df = None
         self.bound_entries = {}
+        self.eval_entries = {}
+        self.eval_history = []
         self.linear_constraints = []
         self.previous_input_cols = []
         self.result = None
         self.current_input_cols = None
+        self.current_output_col = None
+        self.fitted_model_signature = None
+        self.last_opt_report_text = ""
         self.opt_params_dict = {}
         self.plot_config_win = None
 
@@ -709,7 +714,7 @@ class RSMGui(tk.Tk):
             lb_container,
             selectmode=tk.MULTIPLE,
             exportselection=False,
-            height=5,
+            height=4,
             bg="#FFFFFF",
             fg=PALETTE["text_main"],
             selectbackground=PALETTE["accent_light"],
@@ -747,19 +752,111 @@ class RSMGui(tk.Tk):
             justify=tk.LEFT,
         ).pack(anchor=tk.W, fill=tk.X)
 
-        # --- 3. Optimization Bounds (Scrollable) ---
+        # --- 3. Model & Fit Settings ---
+        self.settings_frame = ttk.LabelFrame(
+            left_pane, text="3. Model & Fit Settings", padding=(10, 8)
+        )
+        self.settings_frame.pack(fill=tk.X, pady=(0, 8))
+
+        settings_row = ttk.Frame(self.settings_frame, style="Card.TFrame")
+        settings_row.pack(fill=tk.X)
+
+        ttk.Label(settings_row, text="Method:", style="CardBold.TLabel").pack(
+            side=tk.LEFT, padx=(0, 5)
+        )
+        self.method_var = tk.StringVar(value="Gaussian Process")
+        self.method_combo = ttk.Combobox(
+            settings_row,
+            textvariable=self.method_var,
+            values=rsm_backend.get_supported_methods(),
+            state="readonly",
+            width=18,
+        )
+        self.method_combo.pack(side=tk.LEFT, padx=(0, 12))
+        self.method_combo.bind("<<ComboboxSelected>>", self._on_method_change)
+
+        ttk.Label(settings_row, text="Degree:", style="CardBold.TLabel").pack(
+            side=tk.LEFT, padx=(0, 5)
+        )
+        self.degree_var = tk.IntVar(value=2)
+        self.degree_spin = ttk.Spinbox(
+            settings_row, from_=0, to=10, textvariable=self.degree_var, width=4
+        )
+        self.degree_spin.pack(side=tk.LEFT, padx=(0, 12))
+
+        ttk.Label(settings_row, text="Test Ratio:", style="CardBold.TLabel").pack(
+            side=tk.LEFT, padx=(0, 5)
+        )
+        self.test_size_var = tk.DoubleVar(value=0.20)
+        self.test_size_spin = ttk.Spinbox(
+            settings_row,
+            from_=0.01,
+            to=0.99,
+            increment=0.05,
+            textvariable=self.test_size_var,
+            width=5,
+        )
+        self.test_size_spin.pack(side=tk.LEFT)
+
+        self.method_hint_var = tk.StringVar()
+        ttk.Label(
+            self.settings_frame,
+            textvariable=self.method_hint_var,
+            style="CardMuted.TLabel",
+        ).pack(anchor=tk.W, pady=(4, 6))
+
+        fit_action_row = ttk.Frame(self.settings_frame, style="Card.TFrame")
+        fit_action_row.pack(fill=tk.X)
+
+        self.fit_btn = ttk.Button(
+            fit_action_row,
+            text="▶  Fit Surrogate Model",
+            style="Primary.TButton",
+            command=self.fit_model,
+        )
+        self.fit_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.fit_status_var = tk.StringVar(value="Model not fitted yet.")
+        self.fit_status_lbl = tk.Label(
+            fit_action_row,
+            textvariable=self.fit_status_var,
+            bg=PALETTE["bg_card"],
+            fg=PALETTE["text_muted"],
+            font=self.fonts["small_bold"],
+            anchor=tk.W,
+        )
+        self.fit_status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self._on_method_change()
+        self.degree_var.trace_add("write", lambda *args: self._check_fit_settings_staleness())
+        self.test_size_var.trace_add("write", lambda *args: self._check_fit_settings_staleness())
+
+        # --- 4. Optimization Goal & Bounds (Scrollable) ---
         self.bounds_frame = ttk.LabelFrame(
-            left_pane, text="3. Optimization Bounds (Optional)", padding=(10, 6)
+            left_pane, text="4. Optimization Goal & Bounds (Optional)", padding=(10, 6)
         )
         self.bounds_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
 
         bounds_toolbar = ttk.Frame(self.bounds_frame, style="Card.TFrame")
         bounds_toolbar.pack(fill=tk.X, pady=(0, 4))
+
         ttk.Label(
             bounds_toolbar,
-            text="Leave blank for unconstrained parameter bounds.",
-            style="CardMuted.TLabel",
-        ).pack(side=tk.LEFT)
+            text="Optimization Goal:",
+            style="CardBold.TLabel",
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        self.opt_goal_var = tk.StringVar(value="Minimize")
+        self.opt_goal_combo = ttk.Combobox(
+            bounds_toolbar,
+            textvariable=self.opt_goal_var,
+            values=["Minimize", "Maximize"],
+            state="readonly",
+            width=10,
+        )
+        self.opt_goal_combo.pack(side=tk.LEFT, padx=(0, 10))
+        self.opt_goal_combo.bind("<<ComboboxSelected>>", self._on_opt_goal_change)
+
         ttk.Button(
             bounds_toolbar,
             text="Clear",
@@ -778,7 +875,7 @@ class RSMGui(tk.Tk):
 
         self.bounds_canvas = tk.Canvas(
             bounds_canvas_wrap,
-            height=95,
+            height=85,
             bg=PALETTE["bg_card"],
             bd=0,
             highlightthickness=0,
@@ -802,12 +899,9 @@ class RSMGui(tk.Tk):
         self.bounds_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         bounds_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Initialize empty bounds hint
-        self.on_input_select()
-
-        # --- 4. Linear Constraints ---
+        # --- 5. Linear Constraints ---
         self.constraints_frame = ttk.LabelFrame(
-            left_pane, text="4. Linear Constraints (Optional)", padding=(10, 6)
+            left_pane, text="5. Linear Constraints (Optional)", padding=(10, 6)
         )
         self.constraints_frame.pack(fill=tk.X, pady=(0, 8))
 
@@ -868,60 +962,6 @@ class RSMGui(tk.Tk):
 
         self.constraints_tree.bind("<Double-1>", lambda event: self.edit_linear_constraint())
 
-        # --- 5. Model Settings ---
-        self.settings_frame = ttk.LabelFrame(
-            left_pane, text="5. Model & Fit Settings", padding=(10, 8)
-        )
-        self.settings_frame.pack(fill=tk.X, pady=(0, 8))
-
-        settings_row = ttk.Frame(self.settings_frame, style="Card.TFrame")
-        settings_row.pack(fill=tk.X)
-
-        ttk.Label(settings_row, text="Method:", style="CardBold.TLabel").pack(
-            side=tk.LEFT, padx=(0, 5)
-        )
-        self.method_var = tk.StringVar(value="Gaussian Process")
-        self.method_combo = ttk.Combobox(
-            settings_row,
-            textvariable=self.method_var,
-            values=rsm_backend.get_supported_methods(),
-            state="readonly",
-            width=18,
-        )
-        self.method_combo.pack(side=tk.LEFT, padx=(0, 12))
-        self.method_combo.bind("<<ComboboxSelected>>", self._on_method_change)
-
-        ttk.Label(settings_row, text="Degree:", style="CardBold.TLabel").pack(
-            side=tk.LEFT, padx=(0, 5)
-        )
-        self.degree_var = tk.IntVar(value=2)
-        self.degree_spin = ttk.Spinbox(
-            settings_row, from_=0, to=10, textvariable=self.degree_var, width=4
-        )
-        self.degree_spin.pack(side=tk.LEFT, padx=(0, 12))
-
-        ttk.Label(settings_row, text="Test Ratio:", style="CardBold.TLabel").pack(
-            side=tk.LEFT, padx=(0, 5)
-        )
-        self.test_size_var = tk.DoubleVar(value=0.20)
-        self.test_size_spin = ttk.Spinbox(
-            settings_row,
-            from_=0.01,
-            to=0.99,
-            increment=0.05,
-            textvariable=self.test_size_var,
-            width=5,
-        )
-        self.test_size_spin.pack(side=tk.LEFT)
-
-        self.method_hint_var = tk.StringVar()
-        ttk.Label(
-            self.settings_frame,
-            textvariable=self.method_hint_var,
-            style="CardMuted.TLabel",
-        ).pack(anchor=tk.W, pady=(5, 0))
-        self._on_method_change()
-
         # --- Action Buttons Bar ---
         run_frame = ttk.Frame(left_pane)
         run_frame.pack(fill=tk.X, pady=(2, 0))
@@ -930,9 +970,10 @@ class RSMGui(tk.Tk):
 
         self.run_btn = ttk.Button(
             run_frame,
-            text="▶  Run RSM Optimization",
+            text="▶  Run Optimization",
             style="Primary.TButton",
             command=self.run_optimization,
+            state="disabled",
         )
         self.run_btn.grid(row=0, column=0, sticky=tk.EW, padx=(0, 5))
 
@@ -946,7 +987,7 @@ class RSMGui(tk.Tk):
         self.plot_config_btn.grid(row=0, column=1, sticky=tk.EW, padx=(5, 0))
 
         # =====================================================================
-        # RIGHT PANE: KPI Summary Cards + Tabbed Results & Diagnostics
+        # RIGHT PANE: KPI Summary Cards + Tabbed Results, Evaluation & Report
         # =====================================================================
 
         # --- KPI Summary Strip ---
@@ -965,7 +1006,7 @@ class RSMGui(tk.Tk):
             kpi_strip, 2, "MIN OUTPUT VALUE", "—", "Target: —"
         )
         self.kpi_status = self._create_kpi_card(
-            kpi_strip, 3, "OPTIMIZER STATUS", "Idle", "Awaiting run"
+            kpi_strip, 3, "MODEL & OPT STATUS", "Idle", "Fit model to begin"
         )
 
         # --- Results Notebook ---
@@ -978,9 +1019,12 @@ class RSMGui(tk.Tk):
 
         opt_lbl_frame = ttk.Frame(tables_tab, style="Card.TFrame")
         opt_lbl_frame.pack(fill=tk.X, pady=(0, 4))
+        self.opt_table_hdr_var = tk.StringVar(
+            value="Optimized Input Parameters (Minimizing Target Output)"
+        )
         ttk.Label(
             opt_lbl_frame,
-            text="Optimized Input Parameters (Minimizing Target Output)",
+            textvariable=self.opt_table_hdr_var,
             style="CardBold.TLabel",
         ).pack(side=tk.LEFT)
 
@@ -1087,6 +1131,168 @@ class RSMGui(tk.Tk):
         self.results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
+        # Tab 3: Evaluate Surrogate Model at Custom Input Point
+        eval_tab = ttk.Frame(self.results_notebook, style="Card.TFrame", padding=10)
+        self.results_notebook.add(eval_tab, text="  Evaluate Model  ")
+
+        eval_toolbar = ttk.Frame(eval_tab, style="Card.TFrame")
+        eval_toolbar.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(
+            eval_toolbar,
+            text="Specify Input Parameter Values:",
+            style="CardBold.TLabel",
+        ).pack(side=tk.LEFT)
+
+        ttk.Button(
+            eval_toolbar,
+            text="Clear",
+            style="Small.TButton",
+            command=self.clear_eval_entries,
+        ).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(
+            eval_toolbar,
+            text="Fill with Data Mean",
+            style="Small.TButton",
+            command=self.fill_eval_from_mean,
+        ).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(
+            eval_toolbar,
+            text="Fill from Optimal Solution",
+            style="Small.TButton",
+            command=self.fill_eval_from_optimal,
+        ).pack(side=tk.RIGHT)
+
+        # Scrollable Parameter Inputs for Point Evaluation
+        eval_inputs_wrap = ttk.Frame(eval_tab, style="Card.TFrame")
+        eval_inputs_wrap.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        self.eval_inputs_canvas = tk.Canvas(
+            eval_inputs_wrap,
+            height=115,
+            bg=PALETTE["bg_card"],
+            bd=0,
+            highlightthickness=0,
+        )
+        eval_inputs_scroll = ttk.Scrollbar(
+            eval_inputs_wrap, orient=tk.VERTICAL, command=self.eval_inputs_canvas.yview
+        )
+        self.eval_inputs_inner_frame = ttk.Frame(self.eval_inputs_canvas, style="Card.TFrame")
+        self.eval_inputs_inner_frame.bind(
+            "<Configure>",
+            lambda e: self.eval_inputs_canvas.configure(
+                scrollregion=self.eval_inputs_canvas.bbox("all")
+            ),
+        )
+        self._eval_canvas_win = self.eval_inputs_canvas.create_window(
+            (0, 0), window=self.eval_inputs_inner_frame, anchor="nw"
+        )
+        self.eval_inputs_canvas.bind(
+            "<Configure>",
+            lambda e: self.eval_inputs_canvas.itemconfigure(
+                self._eval_canvas_win, width=e.width
+            ),
+        )
+        self.eval_inputs_canvas.configure(yscrollcommand=eval_inputs_scroll.set)
+        self.eval_inputs_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        eval_inputs_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Evaluation Action & Predicted Output Banner
+        eval_result_bar = tk.Frame(
+            eval_tab,
+            bg=PALETTE["bg_subtle"],
+            highlightbackground=PALETTE["border"],
+            highlightthickness=1,
+            padx=12,
+            pady=8,
+        )
+        eval_result_bar.pack(fill=tk.X, pady=(0, 8))
+
+        self.eval_run_btn = ttk.Button(
+            eval_result_bar,
+            text="▶  Evaluate Output",
+            style="Primary.TButton",
+            command=self.evaluate_custom_point,
+            state="disabled",
+        )
+        self.eval_run_btn.pack(side=tk.LEFT, padx=(0, 14))
+
+        eval_readout_box = tk.Frame(eval_result_bar, bg=PALETTE["bg_subtle"])
+        eval_readout_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.eval_pred_var = tk.StringVar(value="Predicted Output:  —")
+        tk.Label(
+            eval_readout_box,
+            textvariable=self.eval_pred_var,
+            bg=PALETTE["bg_subtle"],
+            fg=PALETTE["accent"],
+            font=self.fonts["title"],
+            anchor=tk.W,
+        ).pack(fill=tk.X)
+
+        self.eval_unc_var = tk.StringVar(
+            value="Fit a surrogate model to evaluate predictions at custom parameter combinations."
+        )
+        tk.Label(
+            eval_readout_box,
+            textvariable=self.eval_unc_var,
+            bg=PALETTE["bg_subtle"],
+            fg=PALETTE["text_secondary"],
+            font=self.fonts["small"],
+            anchor=tk.W,
+        ).pack(fill=tk.X)
+
+        # Evaluation History Table
+        hist_hdr_frame = ttk.Frame(eval_tab, style="Card.TFrame")
+        hist_hdr_frame.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(
+            hist_hdr_frame,
+            text="Evaluated Points History (Double-click a row to reload its inputs)",
+            style="CardBold.TLabel",
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            hist_hdr_frame,
+            text="Clear History",
+            style="Danger.TButton",
+            command=self.clear_eval_history,
+        ).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(
+            hist_hdr_frame,
+            text="Copy History",
+            style="Small.TButton",
+            command=self.copy_eval_history,
+        ).pack(side=tk.RIGHT)
+
+        hist_tree_wrap = ttk.Frame(eval_tab, style="Card.TFrame")
+        hist_tree_wrap.pack(fill=tk.BOTH, expand=True)
+
+        self.eval_history_tree = ttk.Treeview(
+            hist_tree_wrap,
+            columns=("id", "inputs", "predicted", "uncertainty"),
+            show="headings",
+            height=4,
+            selectmode="browse",
+        )
+        self.eval_history_tree.heading("id", text="#")
+        self.eval_history_tree.heading("inputs", text="Input Parameter Combination")
+        self.eval_history_tree.heading("predicted", text="Predicted Output")
+        self.eval_history_tree.heading("uncertainty", text="Std Dev (±σ)")
+
+        self.eval_history_tree.column("id", width=35, anchor=tk.CENTER, stretch=False)
+        self.eval_history_tree.column("inputs", width=260, anchor=tk.W)
+        self.eval_history_tree.column("predicted", width=115, anchor=tk.E)
+        self.eval_history_tree.column("uncertainty", width=110, anchor=tk.E)
+
+        hist_scroll = ttk.Scrollbar(
+            hist_tree_wrap, orient=tk.VERTICAL, command=self.eval_history_tree.yview
+        )
+        self.eval_history_tree.configure(yscrollcommand=hist_scroll.set)
+        self.eval_history_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        hist_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.eval_history_tree.bind("<Double-1>", self._on_eval_history_double_click)
+
+        # Initialize empty bounds & evaluation inputs hints
+        self.on_input_select()
+
         # =====================================================================
         # Bottom Status Bar
         # =====================================================================
@@ -1131,9 +1337,10 @@ class RSMGui(tk.Tk):
         body = tk.Frame(card, bg=PALETTE["bg_card"], padx=10, pady=6)
         body.pack(fill=tk.BOTH, expand=True)
 
+        title_var = tk.StringVar(value=title)
         lbl_title = tk.Label(
             body,
-            text=title,
+            textvariable=title_var,
             bg=PALETTE["bg_card"],
             fg=PALETTE["text_muted"],
             font=self.fonts["kpi_label"],
@@ -1165,10 +1372,77 @@ class RSMGui(tk.Tk):
 
         return {
             "accent": accent_bar,
+            "title_var": title_var,
             "val_var": val_var,
             "sub_var": sub_var,
             "val_lbl": lbl_val,
         }
+
+    def _get_current_fit_signature(self):
+        if self.df is None:
+            return None
+        selected_indices = self.input_listbox.curselection()
+        input_cols = tuple(self.input_listbox.get(i) for i in selected_indices)
+        output_col = self.output_combo.get()
+        method = self.method_var.get()
+        try:
+            degree = int(self.degree_var.get()) if method != "Genetic Programming" else 0
+        except (tk.TclError, ValueError):
+            degree = None
+        try:
+            test_size = round(float(self.test_size_var.get()), 6)
+        except (tk.TclError, ValueError):
+            test_size = None
+        return (id(self.df), input_cols, output_col, method, degree, test_size)
+
+    def _check_fit_settings_staleness(self):
+        if self.result is None or self.fitted_model_signature is None:
+            return
+        curr_sig = self._get_current_fit_signature()
+        if curr_sig != self.fitted_model_signature:
+            self.fit_status_var.set(
+                f"⚠ Settings changed (Active: {self.result.method}, R²={self.result.R_sq:.4f}) — click Fit to update."
+            )
+            self.fit_status_lbl.config(fg=PALETTE["warning"])
+        else:
+            self.fit_status_var.set(
+                f"✓ Fitted: {self.result.method} (R² = {self.result.R_sq:.4f})"
+            )
+            self.fit_status_lbl.config(fg=PALETTE["success"])
+
+    def _invalidate_fitted_model(self, reason_msg="Model not fitted yet."):
+        self.result = None
+        self.current_input_cols = None
+        self.current_output_col = None
+        self.fitted_model_signature = None
+        self.last_opt_report_text = ""
+        self.opt_params_dict = {}
+
+        if hasattr(self, "fit_status_var"):
+            self.fit_status_var.set(reason_msg)
+            self.fit_status_lbl.config(fg=PALETTE["text_muted"])
+        if hasattr(self, "run_btn"):
+            self.run_btn.config(state="disabled")
+        if hasattr(self, "plot_config_btn"):
+            self.plot_config_btn.config(state="disabled")
+        if hasattr(self, "eval_run_btn"):
+            self.eval_run_btn.config(state="disabled")
+        if hasattr(self, "eval_pred_var"):
+            self.eval_pred_var.set("Predicted Output:  —")
+            self.eval_unc_var.set(
+                "Fit a surrogate model to evaluate predictions at custom parameter combinations."
+            )
+        if hasattr(self, "kpi_r2"):
+            self.kpi_r2["val_var"].set("—")
+            self.kpi_r2["sub_var"].set("Not fitted yet")
+            self.kpi_r2["accent"].config(bg=PALETTE["accent"])
+            self.kpi_rmse["val_var"].set("—")
+            self.kpi_rmse["sub_var"].set("MSE: —")
+            self.kpi_opt["val_var"].set("—")
+            self.kpi_opt["sub_var"].set("Target: —")
+            self.kpi_status["val_var"].set("Idle")
+            self.kpi_status["sub_var"].set("Fit model to begin")
+            self.kpi_status["accent"].config(bg=PALETTE["accent"])
 
     def _on_method_change(self, event=None):
         method = self.method_var.get()
@@ -1192,6 +1466,17 @@ class RSMGui(tk.Tk):
             self.method_hint_var.set(
                 "Kriging model — Degree 0: Ordinary Kriging | Degree ≥ 1: Universal Kriging + uncertainty."
             )
+        self._check_fit_settings_staleness()
+
+    def _on_opt_goal_change(self, event=None):
+        goal = self.opt_goal_var.get() if hasattr(self, "opt_goal_var") else "Minimize"
+        is_max = goal == "Maximize"
+        if hasattr(self, "kpi_opt"):
+            self.kpi_opt["title_var"].set("MAX OUTPUT VALUE" if is_max else "MIN OUTPUT VALUE")
+        if hasattr(self, "opt_table_hdr_var"):
+            verb = "Maximizing" if is_max else "Minimizing"
+            self.opt_table_hdr_var.set(f"Optimized Input Parameters ({verb} Target Output)")
+        self._update_column_selection_hint()
 
     def _on_output_selected(self, event=None):
         output_col = self.output_combo.get()
@@ -1204,19 +1489,22 @@ class RSMGui(tk.Tk):
         if changed:
             self.on_input_select()
         else:
+            if self.result is not None and output_col != self.current_output_col:
+                self._invalidate_fitted_model("Target output changed — click 'Fit Surrogate Model'.")
             self._update_column_selection_hint()
 
     def _update_column_selection_hint(self):
         n_in = len(self.input_listbox.curselection())
         out_col = self.output_combo.get()
+        goal = self.opt_goal_var.get() if hasattr(self, "opt_goal_var") else "Minimize"
         if self.df is None:
             self.col_selection_hint_var.set(
-                "Load a dataset to populate columns.\nGoal: Minimize Target Output."
+                f"Load a dataset to populate columns.\nGoal: {goal} Target Output."
             )
         else:
             out_txt = f"'{out_col}'" if out_col else "None selected"
             self.col_selection_hint_var.set(
-                f"Selected: {n_in} input factor(s)\nTarget Output: {out_txt}"
+                f"Selected: {n_in} input factor(s)\nTarget: {out_txt} ({goal})"
             )
 
     def select_all_inputs(self):
@@ -1257,6 +1545,144 @@ class RSMGui(tk.Tk):
         self.clipboard_clear()
         self.clipboard_append(content)
         self.status_var.set("Copied model report to clipboard.")
+
+    # =========================================================================
+    # Surrogate Model Point Evaluation Helpers
+    # =========================================================================
+
+    def _get_col_mean_str(self, col_name):
+        if self.df is None or col_name not in self.df.columns:
+            return "0"
+        series = pd.to_numeric(self.df[col_name], errors="coerce").dropna()
+        if series.empty:
+            return "0"
+        return f"{float(series.mean()):.6g}"
+
+    def fill_eval_from_optimal(self):
+        if not self.eval_entries:
+            return
+        if not self.opt_params_dict:
+            messagebox.showinfo(
+                "Info",
+                "Run optimization first to populate optimal parameter values, or use 'Fill with Data Mean'.",
+            )
+            return
+        for col_name, var in self.eval_entries.items():
+            if col_name in self.opt_params_dict:
+                var.set(f"{self.opt_params_dict[col_name]:.6g}")
+        self.status_var.set("Populated evaluation inputs from the latest optimal solution.")
+
+    def fill_eval_from_mean(self):
+        if not self.eval_entries:
+            return
+        for col_name, var in self.eval_entries.items():
+            var.set(self._get_col_mean_str(col_name))
+        self.status_var.set("Populated evaluation inputs with dataset column means.")
+
+    def clear_eval_entries(self):
+        for var in self.eval_entries.values():
+            var.set("")
+        self.status_var.set("Cleared evaluation input fields.")
+
+    def clear_eval_history(self):
+        self.eval_history.clear()
+        for item in self.eval_history_tree.get_children():
+            self.eval_history_tree.delete(item)
+        self.status_var.set("Cleared evaluation history.")
+
+    def copy_eval_history(self):
+        if not self.eval_history:
+            return
+        lines = ["#\tInputs\tPredicted Output\tStd Dev"]
+        for rec in self.eval_history:
+            lines.append(
+                f"{rec['id']}\t{rec['inputs_str']}\t{rec['pred_str']}\t{rec['std_str']}"
+            )
+        self.clipboard_clear()
+        self.clipboard_append("\n".join(lines))
+        self.status_var.set("Copied evaluation history to clipboard.")
+
+    def _on_eval_history_double_click(self, event=None):
+        sel = self.eval_history_tree.selection()
+        if not sel:
+            return
+        item_id = sel[0]
+        idx = int(self.eval_history_tree.item(item_id, "values")[0]) - 1
+        if 0 <= idx < len(self.eval_history):
+            params_dict = self.eval_history[idx]["params_dict"]
+            for col, val in params_dict.items():
+                if col in self.eval_entries:
+                    self.eval_entries[col].set(f"{val:.6g}")
+            self.status_var.set(f"Reloaded evaluation point #{idx + 1} into input fields.")
+
+    def evaluate_custom_point(self):
+        if self.result is None or not self.current_input_cols:
+            messagebox.showwarning(
+                "Warning", "Please fit the surrogate model first before evaluating points."
+            )
+            return
+
+        param_vals = []
+        params_dict = {}
+        for col in self.current_input_cols:
+            var = self.eval_entries.get(col)
+            txt = var.get().strip() if var is not None else ""
+            if not txt:
+                messagebox.showerror(
+                    "Error", f"Please enter a numeric value for input parameter '{col}'."
+                )
+                return
+            try:
+                val = float(txt)
+            except ValueError:
+                messagebox.showerror(
+                    "Error", f"Invalid numeric value for '{col}': '{txt}'."
+                )
+                return
+            param_vals.append(val)
+            params_dict[col] = val
+
+        try:
+            y_val, std_val = self.result.evaluate_point(param_vals, return_std=True)
+            out_col = self.current_output_col or self.output_combo.get() or "Output"
+
+            self.eval_pred_var.set(f"Predicted {out_col}:  {y_val:.6g}")
+            if std_val is not None:
+                ci_low = y_val - 1.96 * std_val
+                ci_high = y_val + 1.96 * std_val
+                self.eval_unc_var.set(
+                    f"Predictive Std Dev (±1σ): ±{std_val:.5g}   |   95% CI: [{ci_low:.5g}, {ci_high:.5g}]"
+                )
+                std_str = f"±{std_val:.5g}"
+            else:
+                self.eval_unc_var.set(
+                    f"Model: {self.result.method} (Deterministic prediction — uncertainty N/A)"
+                )
+                std_str = "—"
+
+            inputs_str = ", ".join(f"{c}={v:.5g}" for c, v in params_dict.items())
+            pred_str = f"{y_val:.6g}"
+            rec_id = len(self.eval_history) + 1
+            record = {
+                "id": rec_id,
+                "params_dict": params_dict,
+                "inputs_str": inputs_str,
+                "pred_val": y_val,
+                "std_val": std_val,
+                "pred_str": pred_str,
+                "std_str": std_str,
+            }
+            self.eval_history.append(record)
+            self.eval_history_tree.insert(
+                "",
+                tk.END,
+                values=(rec_id, inputs_str, pred_str, std_str),
+            )
+            self.status_var.set(
+                f"Evaluated {self.result.method} at ({inputs_str}) → {out_col} = {y_val:.6g}."
+            )
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to evaluate surrogate model:\n{e!s}")
 
     # =========================================================================
     # Linear Constraints Management
@@ -1367,9 +1793,11 @@ class RSMGui(tk.Tk):
             self.output_combo["values"] = columns
             self.output_combo.set("")
 
-            # Clear bounds and linear constraints
+            # Clear bounds, evaluation history, fitted model, and linear constraints
             self.linear_constraints.clear()
             self.refresh_constraints_tree()
+            self.clear_eval_history()
+            self._invalidate_fitted_model("Dataset loaded — select columns and click 'Fit Surrogate Model'.")
             self.on_input_select()
 
             filename = Path(filepath).name
@@ -1401,8 +1829,12 @@ class RSMGui(tk.Tk):
         selected_indices = self.input_listbox.curselection()
         current_cols = [self.input_listbox.get(idx) for idx in selected_indices]
 
+        prev_cols = getattr(self, "previous_input_cols", [])
+        if current_cols != prev_cols and self.result is not None:
+            self._invalidate_fitted_model("Input factors changed — click 'Fit Surrogate Model'.")
+
         # Reset constraints if the selected input columns have changed
-        if self.linear_constraints and set(current_cols) != set(getattr(self, "previous_input_cols", [])):
+        if self.linear_constraints and set(current_cols) != set(prev_cols):
             self.linear_constraints.clear()
             self.refresh_constraints_tree()
         self.previous_input_cols = current_cols
@@ -1411,11 +1843,20 @@ class RSMGui(tk.Tk):
         existing_bounds = {
             k: (v[0].get(), v[1].get()) for k, v in self.bound_entries.items()
         }
+        existing_eval = {
+            k: v.get() for k, v in self.eval_entries.items()
+        }
 
         # Clear existing bounds widgets
         for widget in self.bounds_inner_frame.winfo_children():
             widget.destroy()
         self.bound_entries = {}
+
+        # Clear existing evaluation input widgets
+        if hasattr(self, "eval_inputs_inner_frame"):
+            for widget in self.eval_inputs_inner_frame.winfo_children():
+                widget.destroy()
+        self.eval_entries = {}
 
         self._update_column_selection_hint()
 
@@ -1425,6 +1866,12 @@ class RSMGui(tk.Tk):
                 text="Select input factors above to configure optional min/max bounds.",
                 style="CardMuted.TLabel",
             ).pack(anchor=tk.W, padx=4, pady=12)
+            if hasattr(self, "eval_inputs_inner_frame"):
+                ttk.Label(
+                    self.eval_inputs_inner_frame,
+                    text="Select input factors and fit the model to evaluate outputs at custom points.",
+                    style="CardMuted.TLabel",
+                ).pack(anchor=tk.W, padx=4, pady=12)
             return
 
         self.bounds_inner_frame.columnconfigure(0, weight=2)
@@ -1432,7 +1879,7 @@ class RSMGui(tk.Tk):
         self.bounds_inner_frame.columnconfigure(2, weight=2)
         self.bounds_inner_frame.columnconfigure(3, weight=2)
 
-        # Headers
+        # Headers for Bounds
         ttk.Label(self.bounds_inner_frame, text="Parameter", style="CardBold.TLabel").grid(
             row=0, column=0, padx=4, pady=(0, 4), sticky=tk.W
         )
@@ -1446,14 +1893,31 @@ class RSMGui(tk.Tk):
             row=0, column=3, padx=4, pady=(0, 4), sticky=tk.W
         )
 
+        # Headers for Evaluation Inputs
+        if hasattr(self, "eval_inputs_inner_frame"):
+            self.eval_inputs_inner_frame.columnconfigure(0, weight=2)
+            self.eval_inputs_inner_frame.columnconfigure(1, weight=2)
+            self.eval_inputs_inner_frame.columnconfigure(2, weight=3)
+            ttk.Label(self.eval_inputs_inner_frame, text="Parameter", style="CardBold.TLabel").grid(
+                row=0, column=0, padx=4, pady=(0, 4), sticky=tk.W
+            )
+            ttk.Label(self.eval_inputs_inner_frame, text="Dataset [Min, Max]", style="CardBold.TLabel").grid(
+                row=0, column=1, padx=4, pady=(0, 4), sticky=tk.W
+            )
+            ttk.Label(self.eval_inputs_inner_frame, text="Evaluation Value", style="CardBold.TLabel").grid(
+                row=0, column=2, padx=4, pady=(0, 4), sticky=tk.W
+            )
+
         for i, idx in enumerate(selected_indices):
             col_name = self.input_listbox.get(idx)
+            range_str = self._get_col_range_str(col_name)
+
             ttk.Label(self.bounds_inner_frame, text=col_name, style="Card.TLabel").grid(
                 row=i + 1, column=0, padx=4, pady=2, sticky=tk.W
             )
             ttk.Label(
                 self.bounds_inner_frame,
-                text=self._get_col_range_str(col_name),
+                text=range_str,
                 style="CardMuted.TLabel",
             ).grid(row=i + 1, column=1, padx=4, pady=2, sticky=tk.W)
 
@@ -1470,14 +1934,82 @@ class RSMGui(tk.Tk):
 
             self.bound_entries[col_name] = (min_var, max_var)
 
+            if hasattr(self, "eval_inputs_inner_frame"):
+                ttk.Label(self.eval_inputs_inner_frame, text=col_name, style="Card.TLabel").grid(
+                    row=i + 1, column=0, padx=4, pady=2, sticky=tk.W
+                )
+                ttk.Label(
+                    self.eval_inputs_inner_frame,
+                    text=range_str,
+                    style="CardMuted.TLabel",
+                ).grid(row=i + 1, column=1, padx=4, pady=2, sticky=tk.W)
+
+                default_eval = existing_eval.get(col_name, self._get_col_mean_str(col_name))
+                eval_var = tk.StringVar(value=default_eval)
+                eval_entry = ttk.Entry(self.eval_inputs_inner_frame, textvariable=eval_var, width=16)
+                eval_entry.grid(row=i + 1, column=2, padx=4, pady=2, sticky=tk.EW)
+                eval_entry.bind("<Return>", lambda e: self.evaluate_custom_point())
+                self.eval_entries[col_name] = eval_var
+
     # =========================================================================
-    # Model Fitting & Optimization Execution
+    # Model Fitting & Optimization Execution (Decoupled)
     # =========================================================================
 
-    def run_optimization(self):
+    def _render_full_report(self):
+        """
+        Render the combined Surrogate Model Fit Report and (if available) Optimization Report
+        into Tab 2 (self.results_text).
+        """
+        self.results_text.config(state="normal")
+        self.results_text.delete(1.0, tk.END)
+
+        if self.result is None or not self.current_input_cols:
+            self.results_text.config(state="disabled")
+            return
+
+        result = self.result
+        input_cols = self.current_input_cols
+        output_col = self.current_output_col or self.output_combo.get()
+
+        self.results_text.insert(tk.END, "=== Surrogate Model Fit Summary ===\n\n")
+        self.results_text.insert(tk.END, f"Target Output Variable: {output_col}\n")
+        self.results_text.insert(tk.END, f"Input Factors ({len(input_cols)}): {', '.join(input_cols)}\n")
+        self.results_text.insert(tk.END, f"Regression Method: {result.method}\n")
+        self.results_text.insert(
+            tk.END, f"Coefficient of Determination (R²): {result.R_sq:.4f}\n"
+        )
+        self.results_text.insert(
+            tk.END, f"Mean Squared Error (MSE): {result.MSE:.6f}\n"
+        )
+        self.results_text.insert(
+            tk.END, f"Root Mean Squared Error (RMSE): {result.RMSE:.6f}\n\n"
+        )
+
+        # Display Coefficients if available (e.g. for RidgeCV)
+        if result.coeffs is not None and result.intercept is not None:
+            self.results_text.insert(tk.END, "Model Coefficients:\n")
+            self.results_text.insert(tk.END, f"  - Intercept: {result.intercept:.6f}\n")
+            term_strings = rsm_backend.generate_term_strings(input_cols, result.model)
+            for term, coeff in zip(term_strings, result.coeffs):
+                self.results_text.insert(tk.END, f"  - {term}: {coeff:.6f}\n")
+            self.results_text.insert(tk.END, "\n")
+
+        # Display mathematical expression if available (e.g. for Genetic Programming)
+        if getattr(result, "expression_text", None):
+            self.results_text.insert(tk.END, f"{result.expression_text}\n\n")
+
+        if self.last_opt_report_text:
+            self.results_text.insert(tk.END, self.last_opt_report_text)
+
+        self.results_text.config(state="disabled")
+
+    def fit_model(self):
+        """
+        Step 3 Action: Fit the surrogate model on the selected dataset and columns without running optimization.
+        """
         if self.df is None:
             messagebox.showwarning("Warning", "Please load data first.")
-            return
+            return False
 
         selected_indices = self.input_listbox.curselection()
         input_cols = [self.input_listbox.get(i) for i in selected_indices]
@@ -1487,16 +2019,127 @@ class RSMGui(tk.Tk):
             messagebox.showwarning(
                 "Warning", "Please select at least one input column."
             )
-            return
+            return False
         if not output_col:
             messagebox.showwarning("Warning", "Please select an output column.")
-            return
-
+            return False
         if output_col in input_cols:
             messagebox.showwarning(
                 "Warning", "Output column cannot be in the input columns."
             )
+            return False
+
+        try:
+            degree = self.degree_var.get()
+            test_size = self.test_size_var.get()
+            method = self.method_var.get()
+
+            if method == "RidgeCV" and degree < 1:
+                messagebox.showerror("Error", "Polynomial degree must be at least 1 for RidgeCV.")
+                return False
+
+            self.status_var.set(f"Fitting {method} surrogate model...")
+            self.fit_status_var.set(f"Fitting {method}...")
+            self.fit_status_lbl.config(fg=PALETTE["accent"])
+            self.update_idletasks()
+
+            result = rsm_backend.rsm_fromDF(
+                self.df,
+                input_cols,
+                output_col,
+                degree_fit=degree,
+                test_size=test_size,
+                method=method,
+            )
+
+            self.result = result
+            self.current_input_cols = input_cols
+            self.current_output_col = output_col
+            self.fitted_model_signature = self._get_current_fit_signature()
+            self.last_opt_report_text = ""
+            self.opt_params_dict = {}
+
+            # Update Fit KPIs
+            self.kpi_r2["val_var"].set(f"{result.R_sq:.4f}")
+            self.kpi_r2["sub_var"].set(f"Method: {result.method}")
+            self.kpi_r2["accent"].config(
+                bg=PALETTE["success"]
+                if result.R_sq >= 0.8
+                else (PALETTE["warning"] if result.R_sq >= 0.5 else PALETTE["danger"])
+            )
+
+            self.kpi_rmse["val_var"].set(f"{result.RMSE:.5g}")
+            self.kpi_rmse["sub_var"].set(f"MSE: {result.MSE:.5g}")
+
+            # Reset Optimization KPIs & tables until optimization is run on this model
+            self._on_opt_goal_change()
+            self.kpi_opt["val_var"].set("—")
+            self.kpi_opt["sub_var"].set(f"Target: {output_col}")
+
+            self.kpi_status["val_var"].set("Model Fitted")
+            self.kpi_status["sub_var"].set("Ready to optimize / evaluate")
+            self.kpi_status["accent"].config(bg=PALETTE["accent"])
+
+            for item in self.opt_params_tree.get_children():
+                self.opt_params_tree.delete(item)
+            for item in self.constraint_eval_tree.get_children():
+                self.constraint_eval_tree.delete(item)
+
+            # Update Fit status indicator & enable downstream buttons
+            self.fit_status_var.set(
+                f"✓ Fitted: {result.method} (R² = {result.R_sq:.4f})"
+            )
+            self.fit_status_lbl.config(fg=PALETTE["success"])
+
+            self.run_btn.config(state="normal")
+            self.plot_config_btn.config(state="normal")
+            self.eval_run_btn.config(state="normal")
+
+            self.eval_pred_var.set(f"Predicted {output_col}:  —")
+            if result.supports_uncertainty:
+                self.eval_unc_var.set(
+                    f"Ready — {result.method} supports predictive uncertainty (±1σ & 95% CI)."
+                )
+            else:
+                self.eval_unc_var.set(
+                    f"Ready — Enter parameter values above and click 'Evaluate Output'."
+                )
+
+            self._render_full_report()
+            self.status_var.set(
+                f"Model fit complete — {result.method} (R² = {result.R_sq:.4f}, RMSE = {result.RMSE:.5g}). Ready for optimization, evaluation, or plotting."
+            )
+            return True
+
+        except Exception as e:
+            self.status_var.set("Model fitting failed — check error dialog.")
+            self.fit_status_var.set("Fit failed.")
+            self.fit_status_lbl.config(fg=PALETTE["danger"])
+            messagebox.showerror(
+                "Error", f"An error occurred while fitting the surrogate model:\n{e!s}"
+            )
+            return False
+
+    def run_optimization(self):
+        """
+        Run constrained minimization or maximization using the already-fitted surrogate model (self.result)
+        without re-fitting the model.
+        """
+        if self.df is None:
+            messagebox.showwarning("Warning", "Please load data first.")
             return
+
+        if self.result is None or not self.current_input_cols:
+            messagebox.showwarning(
+                "Warning",
+                "Please fit the surrogate model first by clicking '▶ Fit Surrogate Model'.",
+            )
+            return
+
+        input_cols = self.current_input_cols
+        output_col = self.current_output_col or self.output_combo.get()
+        goal = self.opt_goal_var.get()
+        is_maximize = goal == "Maximize"
 
         bounds = []
         bounds_display = {}
@@ -1561,28 +2204,38 @@ class RSMGui(tk.Tk):
             scipy_constraints = LinearConstraint(np.array(A_matrix), np.array(lb_vec), np.array(ub_vec))
 
         try:
-            degree = self.degree_var.get()
-            test_size = self.test_size_var.get()
-            method = self.method_var.get()
-
-            if method == "RidgeCV" and degree < 1:
-                messagebox.showerror("Error", "Polynomial degree must be at least 1 for RidgeCV.")
-                return
-
-            self.status_var.set(f"Fitting {method} model and running constrained optimization...")
+            result = self.result
+            self.status_var.set(
+                f"Running constrained {'maximization' if is_maximize else 'minimization'} on fitted {result.method} model..."
+            )
             self.update_idletasks()
 
-            # 1. Fit the model using backend
-            result = rsm_backend.rsm_fromDF(
-                self.df, input_cols, output_col, degree_fit=degree, test_size=test_size, method=method
-            )
+            # Compute a sensible initial guess within bounds or dataset means
+            initial_guess = []
+            for idx, col in enumerate(input_cols):
+                col_mean = 0.0
+                if col in self.df.columns:
+                    s = pd.to_numeric(self.df[col], errors="coerce").dropna()
+                    if not s.empty:
+                        col_mean = float(s.mean())
+                if bounds is not None:
+                    b_lo, b_hi = bounds[idx]
+                    if b_lo is not None and b_hi is not None:
+                        col_mean = 0.5 * (b_lo + b_hi)
+                    elif b_lo is not None and col_mean < b_lo:
+                        col_mean = b_lo
+                    elif b_hi is not None and col_mean > b_hi:
+                        col_mean = b_hi
+                initial_guess.append(col_mean)
+            initial_guess = np.array(initial_guess, dtype=float)
 
-            # 2. Optimize
-            initial_guess = np.zeros(len(input_cols))
             opt_params, opt_val = result.optimize(
-                initial_guess=initial_guess, bounds=bounds, constraints=scipy_constraints
+                initial_guess=initial_guess,
+                bounds=bounds,
+                constraints=scipy_constraints,
+                maximize=is_maximize,
             )
-            if hasattr(opt_val, 'item') and getattr(opt_val, 'ndim', 0) > 0:
+            if hasattr(opt_val, "item") and getattr(opt_val, "ndim", 0) > 0:
                 opt_val = opt_val.item()
             else:
                 opt_val = float(opt_val)
@@ -1591,28 +2244,17 @@ class RSMGui(tk.Tk):
                 col: float(val) for col, val in zip(input_cols, opt_params)
             }
 
-            # 3. Update KPI Summary Cards
-            self.kpi_r2["val_var"].set(f"{result.R_sq:.4f}")
-            self.kpi_r2["sub_var"].set(f"Method: {result.method}")
-            self.kpi_r2["accent"].config(
-                bg=PALETTE["success"] if result.R_sq >= 0.8 else (PALETTE["warning"] if result.R_sq >= 0.5 else PALETTE["danger"])
-            )
-
-            self.kpi_rmse["val_var"].set(f"{result.RMSE:.5g}")
-            self.kpi_rmse["sub_var"].set(f"MSE: {result.MSE:.5g}")
-
+            # Update Optimization KPI Cards
+            self._on_opt_goal_change()
             self.kpi_opt["val_var"].set(f"{opt_val:.6g}")
             self.kpi_opt["sub_var"].set(f"Target: {output_col}")
 
             converged = True
-            opt_msg = "Converged successfully"
             if hasattr(result, "last_opt_result") and result.last_opt_result is not None:
                 opt_res = result.last_opt_result
                 converged = bool(opt_res.success)
-                if not converged:
-                    opt_msg = f"Warning: {opt_res.message}"
 
-            # 4. Populate Structured Tables (Tab 1)
+            # Populate Structured Tables (Tab 1)
             for item in self.opt_params_tree.get_children():
                 self.opt_params_tree.delete(item)
             for col, val in zip(input_cols, opt_params):
@@ -1667,7 +2309,7 @@ class RSMGui(tk.Tk):
                 self.kpi_status["sub_var"].set(
                     f"{len(self.linear_constraints)} constraint(s) satisfied"
                     if self.linear_constraints
-                    else "Unconstrained / Bounds OK"
+                    else f"{goal}d successfully"
                 )
                 self.kpi_status["accent"].config(bg=PALETTE["success"])
             else:
@@ -1677,70 +2319,41 @@ class RSMGui(tk.Tk):
                 )
                 self.kpi_status["accent"].config(bg=PALETTE["warning"])
 
-            # 5. Populate Full Report Text (Tab 2)
-            self.results_text.config(state="normal")
-            self.results_text.delete(1.0, tk.END)
-
-            self.results_text.insert(tk.END, "=== RSM Optimization Results ===\n\n")
+            # Build Optimization Report Section & refresh Full Report (Tab 2)
+            opt_lines = ["=== RSM Optimization Results ===\n\n"]
+            opt_lines.append(f"Optimization Goal: {goal} '{output_col}'\n")
             if hasattr(result, "last_opt_result") and result.last_opt_result is not None:
                 opt_res = result.last_opt_result
                 if opt_res.success:
-                    self.results_text.insert(tk.END, "Optimizer Status: Converged successfully\n")
+                    opt_lines.append("Optimizer Status: Converged successfully\n\n")
                 else:
-                    self.results_text.insert(tk.END, f"Optimizer Status: Warning - {opt_res.message}\n")
+                    opt_lines.append(f"Optimizer Status: Warning - {opt_res.message}\n\n")
 
-            self.results_text.insert(tk.END, f"Regression Method: {result.method}\n")
-            self.results_text.insert(
-                tk.END, f"Coefficient of Determination (R²): {result.R_sq:.4f}\n"
-            )
-            self.results_text.insert(
-                tk.END, f"Mean Squared Error (MSE): {result.MSE:.6f}\n"
-            )
-            self.results_text.insert(
-                tk.END, f"Root Mean Squared Error (RMSE): {result.RMSE:.6f}\n\n"
-            )
-
-            # Display Coefficients if available (e.g. for RidgeCV)
-            if result.coeffs is not None and result.intercept is not None:
-                self.results_text.insert(tk.END, "Model Coefficients:\n")
-                self.results_text.insert(tk.END, f"  - Intercept: {result.intercept:.6f}\n")
-                term_strings = rsm_backend.generate_term_strings(input_cols, result.model)
-                for term, coeff in zip(term_strings, result.coeffs):
-                    self.results_text.insert(tk.END, f"  - {term}: {coeff:.6f}\n")
-                self.results_text.insert(tk.END, "\n")
-
-            # Display mathematical expression if available (e.g. for Genetic Programming)
-            if getattr(result, "expression_text", None):
-                self.results_text.insert(tk.END, f"{result.expression_text}\n\n")
-
-            self.results_text.insert(tk.END, "Optimized Input Parameters:\n")
+            opt_lines.append("Optimized Input Parameters:\n")
             for col, val in zip(input_cols, opt_params):
-                self.results_text.insert(tk.END, f"  - {col}: {val:.6f}\n")
+                opt_lines.append(f"  - {col}: {val:.6f}\n")
 
-            self.results_text.insert(
-                tk.END,
-                f"\nOptimized (Minimum) Output Value [{output_col}]: {opt_val:.6f}\n",
+            extremum_lbl = "Maximum" if is_maximize else "Minimum"
+            opt_lines.append(
+                f"\nOptimized ({extremum_lbl}) Output Value [{output_col}]: {opt_val:.6f}\n"
             )
 
             if constraint_report_lines:
-                self.results_text.insert(tk.END, "\nLinear Constraint Verification:\n")
-                for line in constraint_report_lines:
-                    self.results_text.insert(tk.END, line)
+                opt_lines.append("\nLinear Constraint Verification:\n")
+                opt_lines.extend(constraint_report_lines)
 
-            self.results_text.config(state="disabled")
+            self.last_opt_report_text = "".join(opt_lines)
+            self._render_full_report()
 
-            # Enable plotting configuration
-            self.result = result
-            self.current_input_cols = input_cols
-            self.plot_config_btn.config(state="normal")
+            short_lbl = "Max" if is_maximize else "Min"
             self.status_var.set(
-                f"Optimization complete — {result.method} (R² = {result.R_sq:.4f}, Min {output_col} = {opt_val:.6g})."
+                f"Optimization complete (no refit) — {result.method} ({short_lbl} {output_col} = {opt_val:.6g})."
             )
 
         except Exception as e:
             self.status_var.set("Optimization failed — check error dialog.")
             messagebox.showerror(
-                "Error", f"An error occurred during RSM calculation:\n{e!s}"
+                "Error", f"An error occurred during RSM optimization:\n{e!s}"
             )
 
     # =========================================================================
