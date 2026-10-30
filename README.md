@@ -24,6 +24,73 @@
 
 ---
 
+## Practical Engineering Scenario & Workflow
+
+### The Challenge: Industrial Process & Reactor Optimization
+Consider a process or chemical engineer tasked with optimizing a continuous chemical synthesis reactor or polymer processing line to maximize product yield ($y$, in %) while preventing thermal runaway, catalyst degradation, or excessive byproduct formation.
+
+The engineer controls four continuous operational factors ($D = 4$):
+1. **Reaction Temperature ($T$)**: $140^\circ\text{C}$ to $220^\circ\text{C}$
+2. **Operating Pressure ($P$)**: $2.0\text{ bar}$ to $10.0\text{ bar}$
+3. **Catalyst Concentration ($C$)**: $0.5\text{ wt}\%$ to $3.0\text{ wt}\%$
+4. **Feed Residence Time ($t$)**: $10\text{ min}$ to $60\text{ min}$
+
+#### Practical Engineering Pain Points
+- **Costly & Sparse Testing**: Running full-scale pilot reactor runs is expensive and time-consuming. The team only has a limited Design of Experiments (DoE) dataset (e.g., 25–35 physical runs from a Central Composite or Box-Behnken design).
+- **Strong Nonlinearities & Cross-Factor Interactions**: Reaction kinetics follow exponential Arrhenius behavior. Increasing temperature accelerates reaction rate, but past a threshold it rapidly degrades the catalyst—especially at longer residence times ($T \times t$ interaction). One-factor-at-a-time (OFAT) testing fails to detect these multi-dimensional interactions.
+- **Coupled Safety & Equipment Limits**: The reactor's heat-exchanger capacity and pressure vessel rating impose coupled constraints (e.g., total thermal load $1.5 T + 12 P \le 420$).
+- **Factory-Floor Deployment**: Plant operators and programmable logic controllers (PLCs) need clear, interpretable operating rules or fast closed-form formulas—not opaque, computationally heavy black boxes.
+
+---
+
+### How Super RSM Helps: Step-by-Step Directions
+
+Here is how Super RSM provides an end-to-end analytical workflow to solve this engineering challenge:
+
+```mermaid
+flowchart LR
+    A["1. Sparse DoE Data<br/>(25-35 Reactor Runs)"] --> B["2. Multi-Method Surrogate<br/>(Polynomial OLS / GP / Ridge)"]
+    B --> C["3. Interactive Slicing<br/>(Vectorized Multi-Contours)"]
+    B --> D["4. Uncertainty Bounds<br/>(Guided Active Sampling)"]
+    B --> E["5. Constrained Optimization<br/>(SLSQP Setpoint Solver)"]
+    B --> F["6. Symbolic Regression<br/>(Closed-Form PLC Formula)"]
+```
+
+#### 1. Screen Significant Factors with Classical Polynomial RSM (`Polynomial OLS`)
+- **What you do**: Import your experimental CSV file (`sample_data.csv` or reactor logs) and fit a degree-2 **Polynomial OLS** model with `coded_units=True`.
+- **How it helps**: 
+  - Standardizes variables into $[-1, +1]$ space, allowing direct comparison of factor effect sizes regardless of physical units.
+  - Generates a full **ANOVA table** and term-by-term **$t$-statistic $p$-values**.
+  - Immediately reveals whether quadratic curvature terms ($T^2$) and interaction terms ($T \times C$) are statistically significant ($p < 0.05$), eliminating non-significant parameters and avoiding over-complication.
+
+#### 2. Visualize Multi-Dimensional Parameter Space via Contour Slicing (`MultiContourEngine`)
+- **What you do**: Open the interactive desktop GUI (or headless visualization service) to inspect the 4-dimensional response surface across a $2 \times 2$ or $3 \times 3$ grid of 2D contour slices.
+- **How it helps**:
+  - Fix catalyst concentration ($C = 1.8\%$) and residence time ($t = 30\text{ min}$) using interactive sliders while plotting Temperature vs. Pressure contours.
+  - Overlays actual experimental data points directly onto the contour plots to visually verify that model predictions are well-anchored by physical evidence rather than extrapolation artifacts.
+  - Enables engineers to spot stable operating "plateaus" where yield remains high even if temperature drifts by $\pm 5^\circ\text{C}$.
+
+#### 3. Quantify Risk & Guide Follow-Up Runs with Gaussian Process Kriging (`Gaussian Process`)
+- **What you do**: Switch the surrogate model to **Gaussian Process** with an RBF kernel and WhiteKernel noise estimator.
+- **How it helps**:
+  - Unlike standard polynomial fits that provide only point estimates, the GP model outputs **predictive standard deviations ($\pm 1\sigma$ and 95% confidence intervals)**.
+  - If the model predicts an enticing 98% yield peak in a region with high predictive variance ($\sigma > 15\%$), the software alerts you that this is an under-sampled extrapolation zone.
+  - Guides cost-effective sequential DoE (active learning): you run your next 2 or 3 expensive physical experiments *specifically* where uncertainty is high, minimizing experimental waste.
+
+#### 4. Find the Optimal Operating Window under Coupled Constraints (`OptimizationEngine`)
+- **What you do**: Set up continuous constrained optimization via the GUI dialog or Python API (`result.optimize(...)`).
+- **How it helps**:
+  - Define physical factor bounds (e.g., $T \in [140, 220]$, $P \in [2, 10]$) alongside linear operational safety constraints (e.g., $1.5 T + 12 P \le 420$).
+  - The Scipy-powered SLSQP optimizer automatically converges to the optimal factor vector $(T^*, P^*, C^*, t^*)$ that maximizes yield while strictly honoring all equipment safety envelopes.
+
+#### 5. Discover Closed-Form Governing Equations for Edge & PLC Deployment (`SymbolicRegressor`)
+- **What you do**: Fit a **Genetic Programming** model to the dataset.
+- **How it helps**:
+  - Discovers a compact, human-interpretable algebraic formula (e.g., $y = 78.4 + 0.32 T \cdot C - 0.0015 T^2 / P$).
+  - This explicit equation can be directly coded into plant distributed control systems (DCS), embedded microcontrollers, or Excel spreadsheets without needing Python, Scikit-learn, or machine learning dependencies in production environments.
+
+---
+
 ## Package Architecture (`super_rsm/`)
 
 Super RSM follows a strict 5-layer inward-dependent Directed Acyclic Graph (DAG), with every module kept concise (<350 lines) for human readability and AI maintainability:
