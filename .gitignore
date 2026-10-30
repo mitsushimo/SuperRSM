@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# Agent teamwork scratch and test cache
+.agents/
+.pytest_cache/
