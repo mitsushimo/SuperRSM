@@ -1,294 +1,165 @@
-# Super RSM: Multi-Method Response Surface Methodology Analysis & Visualization Tool
+# Super RSM: Multi-Method Response Surface Methodology Analysis & Visualization Suite
 
-This project provides an extensible Python-based tool with a Graphical User Interface (GUI) designed to fit Response Surface Models (RSM) to experimental or simulated datasets, evaluate surrogate predictions at user-specified points, and find the optimal input parameters to minimize or maximize a target output variable.
+**Super RSM** (`super_rsm`) is a modular, extensible Python library and desktop GUI application for fitting multi-dimensional Response Surface Models (RSM), evaluating surrogate predictions with uncertainty bounds, performing continuous constrained optimization, and rendering sliced multi-contour response surfaces.
 
-Unlike single-method tools, **Super RSM** supports multiple regression methods—including **Gaussian Process Regressor (Kriging)**, **Ridge Regression (RidgeCV)**, and **Genetic Programming (Symbolic Regression)**—within an extensible architecture that makes adding future regression models straightforward, while inheriting advanced multi-dimensional contour plot configurability.
-
-![alt text](readme_images/image.png)
+![Super RSM GUI](readme_images/image.png)
 
 ---
 
-## Features
-- **Multiple Regression Methods**:
-  - **Gaussian Process Regressor (Kriging)**: Supports Ordinary Kriging (constant mean) and Universal Kriging with polynomial drift trends, complete with predictive uncertainty estimation.
-  - **Ridge Regression (RidgeCV)**: Fast cross-validated L2-regularized polynomial fitting with automatic unscaling and extraction of polynomial term coefficients.
-  - **Genetic Programming (Symbolic Regression)**: Evolutionary symbolic regression powered by `gplearn` (`SymbolicRegressor`) that discovers closed-form mathematical equations and relationships directly from data, complete with support for standard arithmetic functions and custom functions (e.g., piecewise).
-- **Extensible Architecture**: Built with a modular registry pattern (`MODEL_REGISTRY` & `register_model`), allowing new regression models to be integrated into the backend and GUI seamlessly.
-- **Decoupled Model Fitting & Downstream Analysis**:
-  - Fit the surrogate model once (**Fit Surrogate Model**) to immediately inspect fit diagnostics ($R^2$, MSE, RMSE, polynomial coefficients, or symbolic equations), and then perform repeated optimizations, point evaluations, or contour visualizations without re-fitting the model.
-- **Interactive Surrogate Model Point Evaluation**:
-  - Dedicated **Evaluate Model** tab to evaluate the fitted surrogate model at any specified combination of input parameters (with quick-fill shortcuts for the Optimal Solution or Dataset Mean), displaying both the predicted response and predictive uncertainty ($\pm 1\sigma$ and 95% confidence interval for uncertainty-capable models) along with a comparison history table.
-- **Graphical User Interface (GUI)**:
-  - Intuitive interface for loading data (`.csv` and `.xlsx`).
-  - Column selection, dynamic optimization bounds specification, optimization goal dropdown (`Minimize` / `Maximize`), polynomial degree adjustment, and test-ratio configuration.
-  - Automatic adaptation of results (displaying coefficients for polynomial models like RidgeCV, or mathematical expressions for Genetic Programming).
-- **Advanced Plot Configuration & Visualization**:
-  - High-dimensional contour and multi-panel ($P \times Q$) subplot visualization powered by `high_d_plotter.py`.
-  - **Measurement Data Scatter Overlay**: Option to scatter-plot experimental/simulated data points (both training and test sets) directly on top of contour plots and uncertainty plots, automatically filtering points that match each subplot's Row-Axis ($P$), Column-Axis ($Q$), and Fixed parameter values.
-  - **Granular Styling Controls**: Full customization of axes, colormaps (`cmap`), uniform color scaling across subplots, colorbars and labels, transparency (`alpha`), contour fill/line levels, inline contour labels, grids, and scatter marker appearance (size, face color, edge color, and marker style).
-  - **Predictive Uncertainty Mapping**: Dedicated secondary uncertainty contour plot generation for uncertainty-capable models (e.g., Gaussian Process), with automatic GUI state handling when switching models or loading settings profiles.
-  - **Profile Management**: Save and load complete plot configuration profiles (parameter roles, labels, and advanced styling/scatter settings) as `.json` files.
-- **Continuous & Constrained Optimization (Minimize or Maximize)**: Scipy-powered numerical optimization to identify optimal input parameters that either **minimize** or **maximize** target responses. Supports:
-  - **Optimization Goal Selection**: Choose between `Minimize` and `Maximize` via the GUI dropdown menu or `maximize=True/False` in `rsm_result.optimize()`.
-  - **Rectangular Bounds**: Parameter-specific lower and upper limits.
-  - **Nonrectangular Linear Constraints**: Arbitrary linear combinations of variables ($\sum c_i x_i \le b$, $\ge b$, or $= b$) configured through an interactive GUI constraint builder or passed directly via `scipy.optimize.LinearConstraint` in the backend.
+## Key Features
+
+- **Extensible Multi-Method Surrogate Modeling (`super_rsm.models`)**:
+  - **Polynomial OLS (Classical RSM)**: Ordinary Least Squares polynomial surfaces with coded variable scaling, Moore-Penrose pseudo-inversion (`pinv`) for collinearity safety, two-tailed term $t$-statistics and $p$-values, Adjusted $R^2$, AIC/BIC, and a full Analysis of Variance (ANOVA) table.
+  - **Gaussian Process Regressor (Kriging)**: Ordinary Kriging (`degree_fit=0`) and Universal Kriging (`degree_fit >= 1`) with predictive standard deviation ($\pm 1\sigma$ and 95% CI).
+  - **Ridge Regression (`RidgeCV`)**: Cross-validated L2-regularized polynomial regression with analytical unscaling of physical coefficients.
+  - **Genetic Programming (`SymbolicRegressor`)**: Evolutionary symbolic regression via `gplearn` that discovers closed-form algebraic equations.
+- **Zero-Touch Model Plugin Architecture**:
+  - Subclass `BaseRSMModel`, declare `metadata: ClassVar[ModelMetadata]` (including `HyperparameterSpec` schemas), and decorate with `@register_rsm_model`. The desktop GUI automatically adds the model to the dropdown and dynamically generates validated parameter controls without modifying any GUI code.
+- **100% Headless Analytical Core (`super_rsm.core`)**:
+  - Dataset splitting (`RSMDataset`), pipeline orchestration (`fit_rsm`, `rsm_fromDF`), and Scipy constrained continuous optimization (`OptimizationEngine`) operate completely headlessly with zero import-time dependencies on `tkinter`, `matplotlib`, or `seaborn`.
+- **Vectorized Surface Grid & Scoped Visualization (`super_rsm.visualization`)**:
+  - Evaluates $100 \times 100$ multi-panel ($P \times Q$) contour grids in single vectorized matrix batches ($<15\text{ ms}$) with experimental scatter overlays and scoped matplotlib styling contexts (`PlotSettings`).
+- **Modular MVP Desktop GUI (`super_rsm.gui`)**:
+  - Decomposed into cohesive views, dialogs, reusable components, reactive `AppState`, and a thread-safe `AppController` (`_run_async`) so long model fits and optimizations never freeze the UI.
 
 ---
 
-## Getting Started
+## Package Architecture (`super_rsm/`)
 
-### Prerequisites
-Make sure you have Python 3 installed (Python 3.9+ recommended).
+Super RSM follows a strict 5-layer inward-dependent Directed Acyclic Graph (DAG), with every module kept concise (<350 lines) for human readability and AI maintainability:
 
-The required third-party packages are:
-- `numpy`: Numerical operations and linear algebra
-- `scipy`: Optimization and linear constraint handling
-- `pandas`: Tabular data loading and manipulation
-- `scikit-learn`: Gaussian Process and Ridge regression, scaling, and evaluation metrics
-- `matplotlib`: Multi-dimensional contour plots and visual layouts
-- `seaborn`: Plot styling and aesthetics
-- `openpyxl`: Excel spreadsheet (`.xlsx`) support
-- `gplearn`: Genetic Programming / symbolic regression
+```text
+SuperRSM/
+├── rsm_gui.py                        # Root GUI launcher entrypoint
+├── rsm_backend.py                    # Root headless pipeline & registry facade
+├── high_d_plotter.py                 # Root visualization facade
+├── sample_data.csv                   # Benchmark quadratic dataset
+├── tests/                            # Comprehensive pytest suite (baseline, models, core, visualization, gui)
+└── super_rsm/
+    ├── common/                       # Layer 0: Types, Enums, Exceptions, HyperparameterSpec, ModelMetadata
+    ├── models/                       # Layer 1: BaseRSMModel ABC, ModelRegistry, GP, RidgeCV, Symbolic, PolynomialOLS
+    ├── core/                         # Layer 2: Headless RSMDataset, RSMResult, OptimizationEngine, pipeline
+    ├── visualization/                # Layer 3: PlotSettings, vectorized GridSampler, MultiContourEngine, VisualizationService
+    └── gui/                          # Layer 4: MVP Desktop UI (RSMApp, AppController, AppState, views/, dialogs/, components/, styles/)
+```
 
-*(Note: `tkinter` is used for the GUI and is included by default with standard Python installations.)*
+---
 
-### Installation
-Install all dependencies using the provided `requirements.txt`:
+## Installation & Quick Start
+
+### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-Alternatively, you can install them directly:
+### 2. Launch the Desktop GUI
 ```bash
-pip install numpy scipy pandas scikit-learn matplotlib seaborn openpyxl gplearn
-```
-
-### Running the Application
-To launch the GUI, run:
-```bash
+python -m super_rsm
+# or:
 python rsm_gui.py
 ```
 
----
-
-## GUI Instructions
-
-1. **Load Data**: Browse and load your dataset (`.csv`, `.xlsx`, or `.xls`).
-2. **Select Variables**: Choose one or more input independent factors and one target output response variable.
-3. **Model & Fit Settings**: Choose the regression method (`Gaussian Process`, `RidgeCV`, or `Genetic Programming`), polynomial degree, and test data ratio, then click **"▶ Fit Surrogate Model"**. This immediately displays the fit diagnostics ($R^2$, MSE, RMSE, model coefficients for `RidgeCV`, or discovered mathematical expressions for `Genetic Programming`) and unlocks optimization, point evaluation, and plotting without requiring subsequent refits.
-4. **Optimization Goal & Bounds (Optional)**: Select the **Optimization Goal** (`Minimize` or `Maximize`) from the dropdown menu, and optionally specify minimum and maximum parameter ranges for individual variables.
-5. **Linear Constraints (Optional)**: Click `"+ Add Constraint"` to define coupled linear constraints across variables (e.g., $1.0 \times \text{Var}_1 + 2.0 \times \text{Var}_2 \le 50.0$) with live algebraic expression preview. Manage multiple constraints via the interactive list (Add, Edit, Delete, Clear).
-6. **Run Optimization**: Click **"▶ Run Optimization"** to find the parameter combination that minimizes or maximizes the fitted surrogate model subject to your bounds and linear constraints (reusing the already-fitted model without refitting). View the optimal parameters and constraint verification report in the **Optimal Solution & Constraints** and **Model Equation & Full Report** tabs.
-7. **Evaluate Model (Point Evaluation)**: Open the **Evaluate Model** tab to evaluate the fitted surrogate model at any custom combination of input parameters (or use **Fill from Optimal Solution** / **Fill with Data Mean**), view the predicted output and uncertainty ($\pm 1\sigma$ and 95% CI when supported), and compare multiple evaluated points in the history table.
-8. **Configure Plot**: Open the plot configuration window to customize multi-dimensional contour visualizations across three tabs:
-   - **Roles Tab**: Assign each input parameter a role:
-     - `X-Axis` / `Y-Axis`: Primary 2D contour axes (specify `Min`, `Max`, and grid `Steps`).
-     - `Row-Axis (P)` / `Column-Axis (Q)`: Optional subplot grid dimensions for visualizing 3D/4D+ slices (specify comma-separated values).
-     - `Fixed`: Hold remaining parameters constant at a specified value.
-   - **Labels Tab**: Customize the plot title, X/Y axis labels, colorbar label, and custom prefixes/suffixes for Row-Axis ($P$) and Column-Axis ($Q$) subplot titles.
-   - **Advanced Settings Tab**:
-     - **Contour & Grid Styling**: Adjust colormap (`cmap`), transparency (`alpha`), fill/line levels, contour line color, inline label color/fontsize/format, and grid color/linestyle.
-     - **Colorbar & Scaling**: Toggle `Uniform Colormap` (shared color scale across all subplots) and `Show Colorbar`.
-     - **Uncertainty Plotting**: Toggle `Plot Uncertainty (Secondary Window)` to generate an accompanying predictive standard deviation contour plot (automatically enabled only for models supporting uncertainty).
-     - **Measurement Data Scatter Overlay**: Toggle `Scatter-Plot Data` to overlay actual dataset points matching each subplot's $P$, $Q$, and fixed parameter values, and configure `Scatter Marker Size`, `Scatter Marker Color`, `Scatter Edge Color`, and `Scatter Marker Style`.
-   - **Save / Load Settings**: Export your current plot configuration to a `.json` file or reload a saved configuration profile.
+### 3. Run the Automated Test Suite
+```bash
+pytest -v
+```
 
 ---
 
-## Architecture & Extensibility
-
-The backend (`rsm_backend.py`) uses a modular registry pattern (`MODEL_REGISTRY`) to register and construct regression models dynamically. This design decouples model definition from model fitting and GUI execution, allowing new regression algorithms to be added seamlessly.
-
-The GUI automatically pulls available methods directly from the backend via `get_supported_methods()`, ensuring that any registered model immediately appears in the GUI dropdown without modifying GUI code.
-
----
-
-### How to Implement a New Regression Method
-
-Adding a new regression method involves two steps:
-1. Define a **builder function** that returns an unfitted scikit-learn-compatible estimator or pipeline.
-2. Register the builder using `register_model()`.
+## Headless Python API Usage
 
 ```python
-from rsm_backend import register_model
+import pandas as pd
+from super_rsm import rsm_fromDF, ConstraintSpec, ConstraintOperator
 
-register_model(
-    name="YourMethodName",
-    builder=build_your_custom_model,
-    supports_uncertainty=False,
-    extract_coeffs=False
+df = pd.read_csv("sample_data.csv")
+
+# Fit Classical Polynomial OLS (with ANOVA & p-values)
+result = rsm_fromDF(
+    df=df,
+    input_columns=["x1", "x2"],
+    output_column="y",
+    method="Polynomial OLS",
+    degree_fit=2,
 )
+print(result.summary())
+
+# Constrained continuous optimization (e.g., x1 + x2 <= 6.0)
+constraint = ConstraintSpec(coeffs={"x1": 1.0, "x2": 1.0}, operator=ConstraintOperator.LE, bound=6.0)
+opt = result.optimize(bounds={"x1": (0.0, 10.0), "x2": (0.0, 10.0)}, constraints=[constraint], maximize=False)
+print(f"Optimal parameters: {opt.to_dict(['x1', 'x2'])}, Minimum y = {opt.fun:.4f}")
 ```
 
 ---
 
-### Builder Function Specification
+## How to Add a Custom Regression Model (Zero GUI Edits)
 
-A **builder function** is a factory function responsible for instantiating and configuring a regression model before it is fitted. When `fit_rsm2()` is executed, the backend calls the builder function and then fits the returned estimator via `model.fit(X_train, y_train)`.
+To add a new regression model that automatically integrates into both the headless pipeline and the desktop GUI:
 
-#### 1. Function Signature
-
-A builder function must accept `degree_fit` and `**kwargs`, and typically accepts `n_samples`:
-
-```python
-def build_custom_model(degree_fit=2, n_samples=None, **kwargs):
-    """
-    Builder function for Custom Regression.
-
-    Parameters:
-    -----------
-    degree_fit : int, default=2
-        The polynomial degree selected in the GUI or passed to fit_rsm2().
-        Used when constructing polynomial feature expansions.
-    n_samples : int or None, optional
-        The number of training samples (len(X_train)).
-        Useful for setting adaptive parameters like cross-validation folds (cv).
-    **kwargs : dict
-        Additional keyword arguments forwarded from fit_rsm2() or rsm_fromDF().
-
-    Returns:
-    --------
-    model : sklearn.base.BaseEstimator or sklearn.pipeline.Pipeline
-        An unfitted scikit-learn estimator or pipeline.
-    """
-```
-
-#### 2. Estimator Requirements (Return Value)
-
-The returned object must conform to the standard `scikit-learn` estimator interface:
-- **`model.fit(X, y)`**: Fits the model on training data ($X \in \mathbb{R}^{N \times D}$, $y \in \mathbb{R}^{N}$).
-- **`model.predict(X)`**: Evaluates predictions on input points.
-- **`model.predict(X, return_std=True)`** *(Optional)*: If registered with `supports_uncertainty=True`, calling `.predict(X, return_std=True)` must return a 2-element tuple `(y_pred, sigma)`, where `sigma` is the 1D predictive standard deviation for each input point.
-- **Pipeline Best Practices**:
-  - Wrapping feature transformations and estimators in `sklearn.pipeline.make_pipeline(...)` or `Pipeline([...])` is strongly recommended.
-  - Including `PolynomialFeatures(degree=degree_fit, include_bias=False)` allows `generate_term_strings()` to automatically extract and label polynomial terms (e.g., $x_0$, $x_1^2$, $x_0 x_1$).
-  - Including `StandardScaler()` helps stabilize numerical regression methods with widely varying input scales.
-
-#### 3. Registration Parameters (`register_model`)
-
-| Parameter | Type | Description |
-| :--- | :--- | :--- |
-| `name` | `str` | Display name of the method shown in the GUI dropdown and summary printouts. |
-| `builder` | `callable` | The builder function adhering to the specification above. |
-| `supports_uncertainty` | `bool` | Set to `True` if `model.predict(X, return_std=True)` is implemented. Enables the uncertainty contour plotting option in the GUI and backend. |
-| `extract_coeffs` | `bool` | Set to `True` if the model has extractable linear polynomial coefficients (e.g., scaled pipeline with `coef_` and `intercept_`) for displaying unscaled physical equations. |
-| `format_expression` | `callable` *(Optional)* | A callable taking `(model)` and returning a string representation of the model's fitted equation/program (e.g., for Genetic Programming). Displayed in summary printouts and the GUI. |
-
----
-
-### Builder Function Examples
-
-#### Example 1: Standard Polynomial Linear / Regularized Model (e.g., LassoCV)
+1. Create a new module in `super_rsm/models/` (or in your user script) subclassing `BaseRSMModel`.
+2. Declare `metadata: ClassVar[ModelMetadata]` with `HyperparameterSpec` items.
+3. Decorate the class with `@register_rsm_model`.
 
 ```python
-from sklearn.linear_model import LassoCV
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import PolynomialFeatures, StandardScaler
-from rsm_backend import register_model
-
-def build_lasso_model(degree_fit=2, n_samples=None, **kwargs):
-    """
-    Builder for Polynomial Lasso regression with cross-validation.
-    """
-    if degree_fit < 1:
-        raise ValueError("degree_fit must be at least 1.")
-    
-    cv = 5 if (n_samples is None or n_samples >= 5) else None
-    
-    return make_pipeline(
-        PolynomialFeatures(degree=degree_fit, include_bias=False),
-        StandardScaler(),
-        LassoCV(cv=cv, **kwargs)
-    )
-
-# Register the model
-register_model(
-    name="LassoCV",
-    builder=build_lasso_model,
-    supports_uncertainty=False,
-    extract_coeffs=False
-)
-```
-
-#### Example 2: Uncertainty-Capable Model (e.g., Custom Gaussian Process)
-
-```python
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import Matern, WhiteKernel
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-from rsm_backend import register_model
-
-def build_custom_gp_model(degree_fit=2, **kwargs):
-    """
-    Builder for Gaussian Process with a Matern kernel and predictive uncertainty.
-    """
-    kernel = Matern(length_scale=1.0, nu=2.5) + WhiteKernel(noise_level=0.1)
-    
-    return make_pipeline(
-        StandardScaler(),
-        GaussianProcessRegressor(kernel=kernel, normalize_y=True, **kwargs)
-    )
-
-# Register with supports_uncertainty=True
-register_model(
-    name="Gaussian Process (Matern)",
-    builder=build_custom_gp_model,
-    supports_uncertainty=True,
-    extract_coeffs=False
-)
-```
-
-#### Example 3: Symbolic Regression / Genetic Programming (with Expression Formatting)
-
-```python
+from typing import Any, ClassVar, List, Optional
 import numpy as np
-from gplearn.genetic import SymbolicRegressor
-from gplearn.functions import make_function
-from rsm_backend import register_model
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
 
-def piecewise_function(condition, true_val, false_val):
-    return np.where(condition > 0, true_val, false_val)
+from super_rsm import (
+    BaseRSMModel,
+    HyperparameterSpec,
+    ModelCategory,
+    ModelMetadata,
+    ModelMetrics,
+    register_rsm_model,
+)
 
-def build_genetic_programming_model(degree_fit=2, **kwargs):
-    """
-    Builder for Genetic Programming Symbolic Regression using gplearn.
-    """
-    piecewise = make_function(function=piecewise_function, name='piecewise', arity=3)
-    function_set = ["add", "sub", "mul", "div", "sqrt", "log", piecewise]
-    return SymbolicRegressor(
-        function_set=function_set,
-        population_size=5000,
-        generations=30,
-        stopping_criteria=0.0,
-        p_crossover=0.7,
-        p_subtree_mutation=0.1,
-        p_hoist_mutation=0.05,
-        p_point_mutation=0.1,
-        max_samples=0.9,
-        parsimony_coefficient=0.005,
-        random_state=42,
-        const_range=(-30, 30),
-        **kwargs
+
+@register_rsm_model
+class RandomForestRSMModel(BaseRSMModel):
+    metadata: ClassVar[ModelMetadata] = ModelMetadata(
+        name="Random Forest",
+        display_name="Random Forest Regressor",
+        category=ModelCategory.ENSEMBLE,
+        description="Non-parametric tree ensemble regressor with feature importances.",
+        supports_uncertainty=False,
+        supports_feature_importance=True,
+        hyperparameters=[
+            HyperparameterSpec("n_estimators", "Trees", int, default=100, min_val=10, max_val=1000, step=10),
+            HyperparameterSpec("max_depth", "Max Depth", int, default=6, min_val=1, max_val=30, step=1),
+        ],
     )
 
-def format_genetic_programming_expression(model):
-    """
-    Extract and format the discovered mathematical equation.
-    """
-    if hasattr(model, "_program") and model._program is not None:
-        return f"Mathematical Expression:\n  {model._program}"
-    return None
+    def __init__(self, n_estimators: int = 100, max_depth: int = 6, **kwargs: Any):
+        super().__init__(n_estimators=n_estimators, max_depth=max_depth, **kwargs)
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.estimator: Optional[RandomForestRegressor] = None
 
-# Register with format_expression callback
-register_model(
-    name="Genetic Programming",
-    builder=build_genetic_programming_model,
-    supports_uncertainty=False,
-    extract_coeffs=False,
-    format_expression=format_genetic_programming_expression
-)
+    def fit(self, X: np.ndarray, y: np.ndarray, feature_names: Optional[List[str]] = None, **kwargs: Any) -> "RandomForestRSMModel":
+        X_arr = np.asarray(X, dtype=float)
+        y_arr = np.asarray(y, dtype=float).ravel()
+        self.feature_names = list(feature_names) if feature_names else [f"x{i+1}" for i in range(X_arr.shape[1])]
+
+        self.estimator = RandomForestRegressor(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            random_state=42,
+        )
+        self.estimator.fit(X_arr, y_arr)
+        self.X_train, self.y_train = X_arr, y_arr
+        self.is_fitted = True
+
+        y_pred = self.estimator.predict(X_arr)
+        mse = float(mean_squared_error(y_arr, y_pred))
+        self.metrics = ModelMetrics(r2=float(r2_score(y_arr, y_pred)), rmse=float(np.sqrt(mse)), mse=mse)
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        self._ensure_fitted()
+        X_arr = np.asarray(X, dtype=float)
+        if X_arr.ndim == 1:
+            X_arr = X_arr.reshape(1, -1)
+        return np.asarray(self.estimator.predict(X_arr), dtype=float).ravel()
 ```
-
-
-
