@@ -15,6 +15,7 @@ import pandas as pd
 from super_rsm.common.config import ConstraintSpec
 from super_rsm.common.types import ConstraintOperator
 from super_rsm.core.pipeline import rsm_fromDF
+from super_rsm.core.reporting import format_full_report_text
 from super_rsm.core.result import RSMResult
 from super_rsm.gui.state import AppState
 
@@ -129,6 +130,7 @@ class AppController:
         method: str,
         test_size: float,
         hyperparameters: Dict[str, Any],
+        split_by_groups: bool = False,
     ) -> RSMResult:
         """Fit surrogate model via headless core pipeline."""
         return rsm_fromDF(
@@ -137,6 +139,7 @@ class AppController:
             output_column=output_col,
             method=method,
             test_size=test_size,
+            split_by_groups=split_by_groups,
             **hyperparameters,
         )
 
@@ -198,46 +201,5 @@ class AppController:
         last_opt_report_text: str = "",
     ) -> str:
         """Format complete diagnostic report including coefficients, formula, p-values, and ANOVA."""
-        if result is None or not input_cols:
-            return ""
-
-        lines = [
-            "=== Surrogate Model Fit Summary ===\n",
-            f"Target Output Variable: {output_col}",
-            f"Input Factors ({len(input_cols)}): {', '.join(input_cols)}",
-            f"Regression Method: {result.method}",
-            f"Coefficient of Determination (R²): {result.R_sq:.4f}",
-        ]
-        if result.metrics.adj_r2 is not None:
-            lines.append(f"Adjusted R²: {result.metrics.adj_r2:.4f}")
-        lines.append(f"Mean Squared Error (MSE): {result.MSE:.6f}")
-        lines.append(f"Root Mean Squared Error (RMSE): {result.RMSE:.6f}")
-        if result.metrics.aic is not None and result.metrics.bic is not None:
-            lines.append(f"AIC: {result.metrics.aic:.2f}  |  BIC: {result.metrics.bic:.2f}")
-        lines.append("")
-
-        coeffs_dict = result.get_coefficients()
-        if coeffs_dict:
-            lines.append("Model Coefficients:")
-            p_vals = result.metrics.term_p_values or {}
-            t_stats = result.metrics.term_t_stats or {}
-            for term, coeff in coeffs_dict.items():
-                if term in p_vals and term in t_stats:
-                    lines.append(f"  - {term}: {coeff:.6f}  (t = {t_stats[term]:.3f}, p = {p_vals[term]:.4g})")
-                else:
-                    lines.append(f"  - {term}: {coeff:.6f}")
-            lines.append("")
-
-        if getattr(result, "expression_text", None):
-            lines.append(f"{result.expression_text}\n")
-
-        if result.metrics.anova_table is not None:
-            lines.append("ANOVA Table:")
-            lines.append(result.metrics.anova_table.to_string(index=False))
-            lines.append("")
-
-        if last_opt_report_text:
-            lines.append(last_opt_report_text.rstrip())
-
-        return "\n".join(lines) + "\n"
+        return format_full_report_text(result, input_cols, output_col, last_opt_report_text)
 

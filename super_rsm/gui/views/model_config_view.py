@@ -58,6 +58,14 @@ class ModelConfigView(ttk.LabelFrame):
         )
         self.test_size_spin.pack(side=tk.LEFT)
 
+        self.split_by_groups_var = tk.BooleanVar(value=True)
+        self.split_by_groups_chk = ttk.Checkbutton(
+            top_row,
+            text="Split by Unique Inputs",
+            variable=self.split_by_groups_var,
+        )
+        self.split_by_groups_chk.pack(side=tk.LEFT, padx=(10, 0))
+
         # Dynamic Hyperparameter Form (populated from ModelRegistry.get_metadata)
         self.param_form = DynamicParamForm(self, on_change=self._notify_change)
         self.param_form.pack(fill=tk.X, pady=(6, 2))
@@ -94,6 +102,7 @@ class ModelConfigView(ttk.LabelFrame):
 
         self._refresh_metadata_ui()
         self.test_size_var.trace_add("write", lambda *args: self._notify_change())
+        self.split_by_groups_var.trace_add("write", lambda *args: self._notify_change())
 
     def refresh_methods(self) -> None:
         """Refresh combobox list if new models were registered dynamically."""

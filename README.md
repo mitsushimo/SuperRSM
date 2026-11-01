@@ -10,9 +10,16 @@
 
 - **Extensible Multi-Method Surrogate Modeling (`super_rsm.models`)**:
   - **Polynomial OLS (Classical RSM)**: Ordinary Least Squares polynomial surfaces with coded variable scaling, Moore-Penrose pseudo-inversion (`pinv`) for collinearity safety, two-tailed term $t$-statistics and $p$-values, Adjusted $R^2$, AIC/BIC, and a full Analysis of Variance (ANOVA) table.
-  - **Gaussian Process Regressor (Kriging)**: Ordinary Kriging (`degree_fit=0`) and Universal Kriging (`degree_fit >= 1`) with predictive standard deviation ($\pm 1\sigma$ and 95% CI).
-  - **Ridge Regression (`RidgeCV`)**: Cross-validated L2-regularized polynomial regression with analytical unscaling of physical coefficients.
-  - **Genetic Programming (`SymbolicRegressor`)**: Evolutionary symbolic regression via `gplearn` that discovers closed-form algebraic equations.
+  - **Ridge Regression (`RidgeCV`)**: Cross-validated L2-regularized polynomial regression with analytical unscaling of physical coefficients, SVD effective degrees of freedom, asymptotic sandwich $t$-statistics and $p$-values, Adjusted $R^2$, AIC/BIC, and ANOVA.
+  - **Bayesian Ridge Polynomial (`Bayesian Ridge`)**: Empirical Bayes probabilistic polynomial regression providing closed-form unscaled equations, exact posterior parameter standard errors, $t$-statistics, $p$-values, effective-DF ANOVA, **and** predictive uncertainty ($\pm 1\sigma$ and 95% CI).
+  - **ElasticNetCV Polynomial (`ElasticNetCV`)**: Cross-validated L1 + L2 sparse polynomial regression that automatically prunes insignificant polynomial/interaction terms to exact zero while providing active-set $t$-statistics, $p$-values, and effective-DF ANOVA.
+  - **Gaussian Process Regressor (`Gaussian Process`)**: Ordinary Kriging (`degree_fit=0`) and Universal Kriging (`degree_fit >= 1`) with predictive standard deviation ($\pm 1\sigma$ and 95% CI), main-effect factor sensitivity rankings, and variance/Lack-of-Fit ANOVA.
+  - **Support Vector Regression (`SVR`)**: Outlier-resistant kernel surrogate (`rbf`, `poly`, `sigmoid`) with standardized input/target scaling, smooth $C^\infty$ response surfaces, main-effect factor sensitivity rankings, and variance/Lack-of-Fit ANOVA.
+  - **Genetic Programming (`SymbolicRegressor`)**: Evolutionary symbolic regression via `gplearn` that discovers closed-form algebraic equations, accompanied by main-effect factor sensitivity and variance/Lack-of-Fit ANOVA.
+- **Unified Statistical Diagnostics & Replicate Lack-of-Fit ANOVA (`super_rsm.models.diagnostics`, `super_rsm.core.reporting`)**:
+  - Formatted monospaced coefficient tables (`Estimate`, `Std. Error`, `t-Value`, `p-Value`, `Rel.Imp`, significance codes `***`/`**`/`*`, and `[Pruned]` indicators), side-by-side **Training Set vs. Testing Set** metrics, model-specific hyperparameter diagnostics, and automatic partitioning of `Residual (Error)` into **`↳ Lack of Fit`** ($F$-test & $p$-value) and **`↳ Pure Error`** whenever replicate experimental runs are present.
+- **Replicate-Aware Train/Test Splitting (`split_by_groups`)**:
+  - Prevents data leakage on datasets containing replicate measurements at identical input parameter combinations by selecting a percentage of **unique input combinations** as the testing set and keeping all replicates of each condition together (enabled by default in the GUI via the **"Split by Unique Inputs"** checkbox).
 - **Zero-Touch Model Plugin Architecture**:
   - Subclass `BaseRSMModel`, declare `metadata: ClassVar[ModelMetadata]` (including `HyperparameterSpec` schemas), and decorate with `@register_rsm_model`. The desktop GUI automatically adds the model to the dropdown and dynamically generates validated parameter controls without modifying any GUI code.
 - **100% Headless Analytical Core (`super_rsm.core`)**:
@@ -49,9 +56,9 @@ Here is how Super RSM provides an end-to-end analytical workflow to solve this e
 
 ```mermaid
 flowchart LR
-    A["1. Sparse DoE Data<br/>(25-35 Reactor Runs)"] --> B["2. Multi-Method Surrogate<br/>(Polynomial OLS / GP / Ridge)"]
+    A["1. Sparse DoE Data<br/>(Replicate-Aware Split)"] --> B["2. Multi-Method Surrogate<br/>(OLS / Ridge / Bayes / ElasticNet / GP / SVR)"]
     B --> C["3. Interactive Slicing<br/>(Vectorized Multi-Contours)"]
-    B --> D["4. Uncertainty Bounds<br/>(Guided Active Sampling)"]
+    B --> D["4. Uncertainty Bounds<br/>(GP & Bayesian Ridge ±1σ)"]
     B --> E["5. Constrained Optimization<br/>(SLSQP Setpoint Solver)"]
     B --> F["6. Symbolic Regression<br/>(Closed-Form PLC Formula)"]
 ```
@@ -104,8 +111,8 @@ SuperRSM/
 ├── tests/                            # Comprehensive pytest suite (baseline, models, core, visualization, gui)
 └── super_rsm/
     ├── common/                       # Layer 0: Types, Enums, Exceptions, HyperparameterSpec, ModelMetadata
-    ├── models/                       # Layer 1: BaseRSMModel ABC, ModelRegistry, GP, RidgeCV, Symbolic, PolynomialOLS
-    ├── core/                         # Layer 2: Headless RSMDataset, RSMResult, OptimizationEngine, pipeline
+    ├── models/                       # Layer 1: BaseRSMModel, ModelRegistry, diagnostics, OLS, RidgeCV, BayesianRidge, ElasticNetCV, GP, SVR, Symbolic
+    ├── core/                         # Layer 2: Headless RSMDataset (replicate-aware), RSMResult, reporting, OptimizationEngine, pipeline
     ├── visualization/                # Layer 3: PlotSettings, vectorized GridSampler, MultiContourEngine, VisualizationService
     └── gui/                          # Layer 4: MVP Desktop UI (RSMApp, AppController, AppState, views/, dialogs/, components/, styles/)
 ```
@@ -141,13 +148,15 @@ from super_rsm import rsm_fromDF, ConstraintSpec, ConstraintOperator
 
 df = pd.read_csv("sample_data.csv")
 
-# Fit Classical Polynomial OLS (with ANOVA & p-values)
+# Fit Classical Polynomial OLS or Bayesian Ridge (with replicate-aware train/test splitting)
 result = rsm_fromDF(
     df=df,
     input_columns=["x1", "x2"],
     output_column="y",
     method="Polynomial OLS",
     degree_fit=2,
+    test_size=0.20,
+    split_by_groups=True,  # Keep replicate runs at identical input combinations together
 )
 print(result.summary())
 
@@ -161,23 +170,23 @@ print(f"Optimal parameters: {opt.to_dict(['x1', 'x2'])}, Minimum y = {opt.fun:.4
 
 ## Surrogate Models & Hyperparameter Tuning Guide
 
-Super RSM provides four complementary surrogate modeling families, each suited to different data regimes, noise characteristics, and interpretability requirements. Each model's hyperparameters are validated in headless Python scripts and rendered as dynamic controls in the desktop GUI.
+Super RSM provides seven complementary surrogate modeling methods across polynomial, regularized/sparse, Bayesian, kernel, and evolutionary families. Each model's hyperparameters are validated in headless Python scripts and rendered as dynamic controls in the desktop GUI, and all models output rich statistical diagnostics (including replicate-based **Lack of Fit** and **Pure Error** ANOVA decomposition whenever repeat experimental runs exist).
 
 ### 1. Polynomial OLS (`method="Polynomial OLS"`)
-*Classical Response Surface Methodology via Ordinary Least Squares with Moore-Penrose pseudoinverse, term $p$-values, Adjusted $R^2$, and ANOVA.*
+*Classical Response Surface Methodology via Ordinary Least Squares with Moore-Penrose pseudoinverse, term $t$-statistics and $p$-values, Adjusted $R^2$, AIC/BIC, and ANOVA.*
 
 | Hyperparameter | Type | Default | Recommended Range | Description & Advice |
 | :--- | :--- | :--- | :--- | :--- |
 | `degree_fit` | `int` | `2` | `1` to `3` | **Polynomial Degree**: `1` = planar first-order surface ($y = \beta_0 + \sum \beta_i x_i$). `2` = standard quadratic RSM with two-way interaction ($\beta_{ij} x_i x_j$) and pure quadratic ($\beta_{ii} x_i^2$) curvature terms. `3` = cubic surface.<br/>*Advice:* Use **degree 2** for standard experimental designs (Central Composite, Box-Behnken). Avoid degree $\ge 3$ on small datasets ($N < 30$), as term count grows combinatorially ($p = \binom{d+k}{k}$), risking rank deficiency or severe overfitting. |
-| `coded_units` | `bool` | `False` | `True` / `False` | **Coded Variable Transformation**: Maps physical input ranges $[x_{\min}, x_{\max}]$ into dimensionless $[-1, +1]$ coded space before regression, then analytically converts coefficients back to natural physical units.<br/>*Advice:* **Enable (`True`)** whenever factor dimensions differ significantly in magnitude (e.g., Temperature in $[300, 1200]\text{ K}$ vs. Flow Rate in $[0.01, 0.05]\text{ m}^3/\text{s}$). Coded units dramatically improve design matrix condition numbers and enable direct comparison of standardized factor effect sizes. |
+| `coded_units` | `bool` | `False` | `True` / `False` | **Coded Variable Transformation**: Maps physical input ranges $[x_{\min}, x_{\max}]$ into dimensionless $[-1, +1]$ coded space before regression.<br/>*Advice:* **Enable (`True`)** whenever factor dimensions differ significantly in magnitude (e.g., Temperature in $[300, 1200]\text{ K}$ vs. Flow Rate in $[0.01, 0.05]\text{ m}^3/\text{s}$). Coded units dramatically improve design matrix condition numbers and enable direct comparison of standardized factor effect sizes. |
 
 > [!TIP]
-> **When to Choose Polynomial OLS:** Ideal when your primary goal is classical statistical inference—screening significant factors via $t$-test $p$-values ($p < 0.05$) and verifying lack-of-fit or regression significance through the ANOVA table.
+> **When to Choose Polynomial OLS:** Ideal when your primary goal is classical unregularized statistical inference—screening significant factors via exact OLS $t$-test $p$-values ($p < 0.05$) and verifying regression significance and Lack-of-Fit through the ANOVA table.
 
 ---
 
 ### 2. Ridge Regression (`method="RidgeCV"`)
-*L2-regularized polynomial regression with cross-validated penalty selection and analytical unscaling of physical coefficients.*
+*L2-regularized polynomial regression with cross-validated penalty selection, analytical unscaling of physical coefficients, SVD effective degrees of freedom, asymptotic sandwich $t$-statistics/$p$-values, and ANOVA.*
 
 | Hyperparameter | Type | Default | Recommended Range | Description & Advice |
 | :--- | :--- | :--- | :--- | :--- |
@@ -186,12 +195,41 @@ Super RSM provides four complementary surrogate modeling families, each suited t
 | `cv` | `int` | `5` | `3` to `10` | **Cross-Validation Folds**: Number of cross-validation partitions for penalty selection.<br/>*Advice:* Use **5 folds** for general datasets ($N \ge 30$). If working with very small experimental designs ($N < 20$), reduce `cv=3` to guarantee sufficient validation samples per split. |
 
 > [!TIP]
-> **When to Choose RidgeCV:** Ideal when your input factors exhibit moderate-to-severe multicollinearity or when fitting higher-order polynomial surfaces where standard OLS yields inflated coefficient variance.
+> **When to Choose RidgeCV:** Ideal when your input factors exhibit moderate-to-severe multicollinearity or when fitting higher-order polynomial surfaces where standard OLS yields inflated coefficient variance, while still retaining a full coefficient table with standard errors, $t$-ratios, $p$-values, and effective-DF ANOVA.
 
 ---
 
-### 3. Gaussian Process Regressor (`method="Gaussian Process"`)
-*Non-parametric Kriging interpolator with Radial Basis Function (RBF) and WhiteKernel noise, delivering predictive standard deviation ($\pm 1\sigma$ and 95% confidence intervals).*
+### 3. Bayesian Ridge Polynomial (`method="Bayesian Ridge"`)
+*Empirical Bayes probabilistic polynomial regression providing unscaled physical equations, exact posterior $t$-statistics and $p$-values, effective-DF ANOVA, **and** predictive uncertainty ($\pm 1\sigma$ and 95% confidence intervals).*
+
+| Hyperparameter | Type | Default | Recommended Range | Description & Advice |
+| :--- | :--- | :--- | :--- | :--- |
+| `degree_fit` | `int` | `2` | `1` to `4` | **Polynomial Expansion Degree**: Degree of polynomial feature expansion.<br/>*Advice:* Use `2` for quadratic RSM or `3` for cubic surfaces; empirical Bayes automatically tunes the weight precision ($\lambda$) and noise precision ($\alpha$) to prevent overfitting. |
+| `max_iter` | `int` | `300` | `100` to `1000` | **Max Iterations**: Maximum number of marginal log-likelihood evidence maximization iterations.<br/>*Advice:* The default `300` converges in milliseconds on typical DoE datasets. |
+| `tol` | `float` | `0.001` | $10^{-5}$ to $10^{-2}$ | **Convergence Tolerance**: Stopping threshold for evidence optimization.<br/>*Advice:* Keep at `0.001` (`1e-3`) for standard use; tighten to `1e-5` for high-precision posterior covariance estimates. |
+
+> [!TIP]
+> **When to Choose Bayesian Ridge:** Best when you want **both** an interpretable closed-form polynomial equation (with posterior $t$-scores, $p$-values, and ANOVA) **and** predictive uncertainty ($\pm 1\sigma$ confidence intervals and uncertainty contour plots) without tuning cross-validation folds.
+
+---
+
+### 4. ElasticNetCV Sparse Polynomial (`method="ElasticNetCV"`)
+*Cross-validated L1 (Lasso) + L2 (Ridge) sparse polynomial regression that automatically zeroes out insignificant polynomial and interaction terms (`[Pruned]`), with active-set $t$-statistics, $p$-values, and effective-DF ANOVA.*
+
+| Hyperparameter | Type | Default | Recommended Range | Description & Advice |
+| :--- | :--- | :--- | :--- | :--- |
+| `degree_fit` | `int` | `2` | `1` to `4` | **Polynomial Expansion Degree**: Degree of candidate polynomial basis terms.<br/>*Advice:* Particularly effective at degree `2` or `3` with many input factors ($D \ge 4$), where most high-order interaction terms are noise and should be pruned automatically. |
+| `l1_ratio` | `float` | `0.5` | `0.1` to `1.0` | **L1 Penalty Mix (`1.0` = Pure Lasso)**: Balance between L1 sparsity and L2 collinearity stability.<br/>*Advice:* Set to **`0.8–1.0`** for aggressive term pruning (concise formulas with minimal terms). Set to **`0.2–0.5`** when input factors are strongly correlated so correlated terms are shrunk smoothly rather than arbitrarily dropping one. |
+| `cv` | `int` | `5` | `3` to `10` | **Cross-Validation Folds**: Number of folds used to select the optimal penalty $\alpha^*$. |
+| `max_iter` | `int` | `2000` | `1000` to `10000` | **Max Iterations**: Maximum coordinate descent iterations.<br/>*Advice:* Increase to `5000` if fitting high-degree polynomials (`degree_fit >= 3`) on strongly collinear features. |
+
+> [!TIP]
+> **When to Choose ElasticNetCV:** Ideal for high-dimensional or higher-degree polynomial RSM where you want **automated feature/term selection** to eliminate irrelevant interactions and produce a clean, parsimonious algebraic formula.
+
+---
+
+### 5. Gaussian Process Regressor (`method="Gaussian Process"`)
+*Non-parametric Kriging interpolator with Radial Basis Function (RBF) and WhiteKernel noise, delivering predictive standard deviation ($\pm 1\sigma$ and 95% confidence intervals), main-effect factor sensitivity rankings, and variance/Lack-of-Fit ANOVA.*
 
 | Hyperparameter | Type | Default | Recommended Range | Description & Advice |
 | :--- | :--- | :--- | :--- | :--- |
@@ -202,12 +240,27 @@ Super RSM provides four complementary surrogate modeling families, each suited t
 | `random_state` | `int` | `42` | Any integer | **Random Seed**: Ensures deterministic reproducibility of optimizer restarts and cross-validation splits. |
 
 > [!TIP]
-> **When to Choose Gaussian Process:** Mandatory when you require **uncertainty quantification** (e.g., Bayesian optimization, safe design margins, or identifying under-sampled regions of the design space via standard error contours).
+> **When to Choose Gaussian Process:** Best for non-parametric multi-modal response surfaces when you require **spatial uncertainty quantification** (e.g., Bayesian optimization, safe design margins, or identifying under-sampled regions of the design space via standard error contours).
 
 ---
 
-### 4. Genetic Programming (`method="Genetic Programming"`)
-*Symbolic regression using evolutionary algorithms (`gplearn`) to discover closed-form, interpretable mathematical formulas.*
+### 6. Support Vector Regression (`method="SVR"`)
+*Outlier-robust kernel surrogate model with automatic input and target standardization, $\epsilon$-insensitive tube loss, main-effect factor sensitivity rankings, and variance/Lack-of-Fit ANOVA.*
+
+| Hyperparameter | Type | Default | Recommended Range | Description & Advice |
+| :--- | :--- | :--- | :--- | :--- |
+| `kernel` | `str` | `"rbf"` | `"rbf"`, `"poly"`, `"sigmoid"` | **Kernel Basis Type**: Basis function mapping inputs into high-dimensional feature space.<br/>*Advice:* Use **`"rbf"`** (Radial Basis Function) for smooth, infinitely differentiable ($C^\infty$) nonlinear response surfaces that work seamlessly with `SLSQP` gradient optimization. |
+| `C` | `float` | `10.0` | `0.5` to `100.0` | **Box Constraint Penalty ($C$)**: Trade-off between surface smoothness and fitting deviations larger than $\epsilon$.<br/>*Advice:* Lower values (`1.0–5.0`) enforce heavier smoothing and strong outlier resistance. Higher values (`20.0–100.0`) allow tighter fitting to complex curvature in low-noise datasets. |
+| `epsilon` | `float` | `0.05` | `0.005` to `0.5` | **Epsilon-Insensitive Tube ($\epsilon$)**: Half-width of the zero-penalty error tube (in standardized target units).<br/>*Advice:* Errors smaller than $\epsilon$ are ignored, preventing the surface from chasing experimental measurement jitter. Increase to `0.1–0.25` on noisy datasets. |
+| `degree_fit` | `int` | `3` | `1` to `5` | **Polynomial Kernel Degree**: Used only when `kernel="poly"`. |
+
+> [!TIP]
+> **When to Choose SVR:** Ideal when your dataset contains **experimental outliers** or complex nonlinearities where OLS/Kriging may be pulled off-course, while still guaranteeing a smooth, infinitely differentiable surface for gradient-based `SLSQP` optimization and contour plotting.
+
+---
+
+### 7. Genetic Programming (`method="Genetic Programming"`)
+*Symbolic regression using evolutionary algorithms (`gplearn`) to discover closed-form, interpretable mathematical formulas, with main-effect factor sensitivity rankings and variance/Lack-of-Fit ANOVA.*
 
 | Hyperparameter | Type | Default | Recommended Range | Description & Advice |
 | :--- | :--- | :--- | :--- | :--- |
@@ -221,11 +274,14 @@ Super RSM provides four complementary surrogate modeling families, each suited t
 
 ---
 
-### General Pipeline Settings
+### General Pipeline & Validation Split Settings
 
 - **Train/Test Validation Split (`test_size`, default: `0.2`)**:
-  - The fraction of data held out for calculating test metrics ($R^2$, RMSE, MSE).
+  - The fraction of data (or unique input conditions) held out for calculating test metrics ($R^2$, RMSE, MSE, MAE) alongside training set fit diagnostics.
   - *Advice:* For standard datasets ($N \ge 30$), `0.2` provides a reliable generalization check. For small experimental designs ($N < 20$), set `test_size = 0.0` or `0.1` to maximize sample data for training.
+- **Replicate-Aware Grouped Split (`split_by_groups`, GUI Checkbox `"Split by Unique Inputs"`, default: `True` in GUI)**:
+  - When enabled, Super RSM groups all rows that share identical combinations of input parameters $(x_1, \dots, x_D)$ and selects `test_size` fraction of the **unique input combinations** as the testing set.
+  - *Advice:* **Keep enabled (`True`)** whenever your dataset contains replicate measurements (e.g., repeated center points or duplicate experimental trials). Random row-wise splitting leaks identical input combinations across train and test sets, artificially inflating test $R^2$; grouped splitting ensures the test set strictly measures generalization to unseen factor combinations while keeping training replicates intact for **Pure Error** and **Lack of Fit** ANOVA testing.
 
 ---
 

@@ -13,6 +13,7 @@ from sklearn.preprocessing import PolynomialFeatures
 from super_rsm.common.config import HyperparameterSpec, ModelMetadata
 from super_rsm.common.types import ModelCategory
 from super_rsm.models.base import BaseRSMModel, ModelMetrics
+from super_rsm.models.diagnostics import build_anova_table
 from super_rsm.models.registry import register_model
 
 
@@ -131,18 +132,7 @@ class PolynomialOLSModel(BaseRSMModel):
         p_vals = 2.0 * (1.0 - stats.t.cdf(np.abs(t_stats), df=df_resid))
 
         df_model = p_terms - 1
-        ms_reg = ss_reg / df_model if df_model > 0 else 0.0
-        f_stat = ms_reg / s_sq if (s_sq > 0 and df_model > 0) else np.nan
-        f_p_val = 1.0 - stats.f.cdf(f_stat, df_model, df_resid) if (s_sq > 0 and df_model > 0) else np.nan
-
-        anova_df = pd.DataFrame({
-            "Source": ["Model (Regression)", "Residual (Error)", "Total"],
-            "SS": [ss_reg, rss, tss],
-            "df": [df_model, df_resid, n_samples - 1],
-            "MS": [ms_reg, s_sq, np.nan],
-            "F-Value": [f_stat, np.nan, np.nan],
-            "p-Value": [f_p_val, np.nan, np.nan],
-        })
+        anova_df = build_anova_table(y_arr, y_pred, df_model=float(df_model), X=X_arr)
 
         r2 = 1.0 - (rss / tss) if tss > 0 else 0.0
         adj_r2 = 1.0 - (1.0 - r2) * ((n_samples - 1) / df_resid) if (df_resid > 0 and tss > 0) else r2
@@ -164,6 +154,11 @@ class PolynomialOLSModel(BaseRSMModel):
             term_t_stats={t: float(t_val) for t, t_val in zip(self.term_names, t_stats)},
             term_std_errors={t: float(s_val) for t, s_val in zip(self.term_names, se)},
             anova_table=anova_df,
+            custom_metrics={
+                "Parameterization": "Coded Units [-1, +1]" if self.coded_units else "Physical (Uncoded) Units",
+                "Polynomial Terms (P)": str(p_terms),
+                "Residual DF": str(df_resid),
+            },
         )
 
         self.X_train = X_arr

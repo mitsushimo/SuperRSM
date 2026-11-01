@@ -10,6 +10,7 @@ import numpy as np
 
 from super_rsm.common.exceptions import UncertaintyNotSupportedError
 from super_rsm.core.dataset import RSMDataset
+from super_rsm.core.reporting import format_result_summary
 from super_rsm.models.base import BaseRSMModel, ModelMetrics
 
 if TYPE_CHECKING:
@@ -54,10 +55,11 @@ class RSMResult:
             self.supports_uncertainty = False
 
         self.sigma_test: Optional[np.ndarray] = None
+        self.train_metrics: Optional[ModelMetrics] = getattr(model, "metrics", None)
         if metrics is not None:
             self.metrics: ModelMetrics = metrics
-        elif hasattr(model, "metrics") and model.metrics is not None:
-            self.metrics = model.metrics
+        elif self.train_metrics is not None:
+            self.metrics = self.train_metrics
         else:
             self.metrics = self._compute_test_metrics()
 
@@ -206,20 +208,7 @@ class RSMResult:
         return self.model.get_feature_importance() if hasattr(self.model, "get_feature_importance") else None
 
     def summary(self) -> str:
-        lines = [
-            f"SuperRSM Model Summary: {self.method}", f"{'=' * 50}",
-            f"Target Variable: {self.target_name}",
-            f"Input Factors ({len(self.feature_names)}): {', '.join(self.feature_names)}",
-            f"Training Samples: {self.dataset.n_train} | Testing Samples: {self.dataset.n_test}",
-            f"{'-' * 50}", "Goodness-of-Fit Metrics (Test Set):",
-            f"  R²:       {self.metrics.r2:.5f}", f"  RMSE:     {self.metrics.rmse:.5f}", f"  MSE:      {self.metrics.mse:.5f}",
-        ]
-        if self.metrics.mae is not None: lines.append(f"  MAE:      {self.metrics.mae:.5f}")
-        if self.metrics.adj_r2 is not None: lines.append(f"  Adj. R²:  {self.metrics.adj_r2:.5f}")
-        if self.metrics.aic is not None: lines.append(f"  AIC:      {self.metrics.aic:.2f} | BIC: {self.metrics.bic:.2f}")
-        if self.expression_text: lines.extend([f"{'-' * 50}", f"Model Expression: {self.expression_text}"])
-        if self.metrics.anova_table is not None: lines.extend([f"{'-' * 50}", "ANOVA Table:", str(self.metrics.anova_table)])
-        return "\n".join(lines)
+        return format_result_summary(self)
 
     def __str__(self) -> str:
         parts = [f"Regression Method: {self.method}"]

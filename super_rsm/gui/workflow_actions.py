@@ -155,6 +155,7 @@ class RSMWorkflowMixin:
             hparams = self.model_view.get_hyperparameters()
             test_size = float(self.test_size_var.get())
             method = self.method_var.get()
+            split_by_groups = bool(self.split_by_groups_var.get()) if hasattr(self, "split_by_groups_var") else True
         except Exception as e:
             messagebox.showerror("Error", f"Invalid fit configuration:\n{e!s}", parent=self)
             return False
@@ -200,7 +201,7 @@ class RSMWorkflowMixin:
 
         return self.controller._run_async(
             AppController.execute_fit,
-            self.state.df, input_cols, output_col, method, test_size, hparams,
+            self.state.df, input_cols, output_col, method, test_size, hparams, split_by_groups,
             on_success=_on_fit_done, on_error=_on_fit_err,
             busy_message=f"Fitting {method} surrogate model...", synchronous=sync_flag,
         )

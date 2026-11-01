@@ -18,10 +18,13 @@ from super_rsm.common.exceptions import (
     UncertaintyNotSupportedError,
 )
 from super_rsm.models import (
+    BayesianRidgeRSMModel,
+    ElasticNetCVRSMModel,
     GaussianProcessRSMModel,
     ModelRegistry,
     PolynomialOLSModel,
     RidgeCVRSMModel,
+    SVRRSMModel,
     SurfaceGridConfig,
     SymbolicRegressorRSMModel,
 )
@@ -42,7 +45,15 @@ def sample_data():
 
 def test_registry_contains_all_models_and_introspection():
     names = ModelRegistry.list_names()
-    for required in ["Gaussian Process", "RidgeCV", "Genetic Programming", "Polynomial OLS"]:
+    for required in [
+        "Gaussian Process",
+        "RidgeCV",
+        "Genetic Programming",
+        "Polynomial OLS",
+        "Bayesian Ridge",
+        "ElasticNetCV",
+        "SVR",
+    ]:
         assert required in names
     for name in names:
         meta = ModelRegistry.get_metadata(name)
@@ -211,3 +222,91 @@ def test_polymorphic_evaluate_and_surface_grid(sample_data):
     # Uncertainty unsupported check on RidgeCV
     with pytest.raises(UncertaintyNotSupportedError):
         models[1].predict_with_uncertainty(sample_data["X"][:5])
+
+
+# =============================================================================
+# 7. New Models (Bayesian Ridge, ElasticNetCV, SVR) & Extended ANOVA / t-Stats
+# =============================================================================
+
+def test_bayesian_ridge_uncertainty_and_posterior_t_stats(sample_data):
+    br = BayesianRidgeRSMModel(degree_fit=2)
+    br.fit(sample_data["X"], sample_data["y"], feature_names=["x1", "x2"])
+    assert br.is_fitted
+    m = br.get_metrics()
+    assert m.r2 > 0.99
+    assert m.adj_r2 > 0.99
+    assert m.anova_table is not None
+    assert m.term_t_stats is not None and m.term_p_values is not None and m.term_std_errors is not None
+    assert m.term_p_values["x1"] < 0.01
+    assert m.term_p_values["x2"] < 0.01
+    assert m.term_p_values["x1^2"] < 0.01
+    assert m.term_p_values["x2^2"] < 0.01
+
+    val, std = br.evaluate_point([3.0, 4.0], return_std=True)
+    assert val == pytest.approx(5.0, abs=0.3)
+    assert std is not None and std > 0.0
+    assert br.get_formula().startswith("y =")
+
+
+def test_elastic_net_cv_sparsity_and_active_t_stats(sample_data):
+    enet = ElasticNetCVRSMModel(degree_fit=2, l1_ratio=0.9, cv=5)
+    enet.fit(sample_data["X"], sample_data["y"], feature_names=["x1", "x2"])
+    assert enet.is_fitted
+    m = enet.get_metrics()
+    assert m.r2 > 0.99
+    assert m.anova_table is not None
+    assert m.term_t_stats is not None and m.term_p_values is not None
+    assert m.term_p_values["x1"] < 0.01
+    assert m.term_p_values["x2"] < 0.01
+    assert "Active / Total Terms" in m.custom_metrics
+
+
+def test_svr_fitting_sensitivity_and_anova(sample_data):
+    svr = SVRRSMModel(kernel="rbf", C=20.0, epsilon=0.05)
+    svr.fit(sample_data["X"], sample_data["y"], feature_names=["x1", "x2"])
+    assert svr.is_fitted
+    m = svr.get_metrics()
+    assert m.r2 > 0.95
+    assert m.anova_table is not None
+    assert "Support Vectors" in m.custom_metrics
+    imp = svr.get_feature_importance()
+    assert imp is not None and set(imp.keys()) == {"x1", "x2"}
+    assert sum(imp.values()) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_ridgecv_extended_t_stats_and_anova(sample_data):
+    ridge = RidgeCVRSMModel(degree_fit=2)
+    ridge.fit(sample_data["X"], sample_data["y"], feature_names=["x1", "x2"])
+    m = ridge.get_metrics()
+    assert m.anova_table is not None
+    assert m.term_t_stats is not None and m.term_p_values is not None and m.term_std_errors is not None
+    assert m.term_p_values["x1"] < 0.01
+    assert m.term_p_values["x2"] < 0.01
+    assert m.adj_r2 is not None and m.aic is not None and m.bic is not None
+
+
+def test_replicate_lack_of_fit_and_pure_error_anova():
+    rng = np.random.default_rng(123)
+    # 12 unique points, 3 replicates each -> 36 samples total (df_PE = 24)
+    X_unique = rng.uniform(0.0, 5.0, size=(12, 2))
+    X_rep = np.repeat(X_unique, 3, axis=0)
+    y_true = 2.0 + 3.0 * X_rep[:, 0] - 1.5 * X_rep[:, 1] + 0.8 * (X_rep[:, 0] ** 2)
+    y_rep = y_true + rng.normal(0.0, 0.2, size=len(y_true))
+
+    for model in [
+        PolynomialOLSModel(degree_fit=2),
+        RidgeCVRSMModel(degree_fit=2),
+        BayesianRidgeRSMModel(degree_fit=2),
+        ElasticNetCVRSMModel(degree_fit=2),
+        SVRRSMModel(kernel="rbf", C=10.0),
+    ]:
+        model.fit(X_rep, y_rep, feature_names=["x1", "x2"])
+        anova = model.get_metrics().anova_table
+        assert anova is not None
+        sources = list(anova["Source"])
+        assert any("Lack of Fit" in s for s in sources)
+        assert any("Pure Error" in s for s in sources)
+        pe_row = anova[anova["Source"].str.contains("Pure Error")].iloc[0]
+        assert pe_row["df"] == pytest.approx(24.0)
+        assert pe_row["SS"] > 0.0
+

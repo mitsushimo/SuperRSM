@@ -13,6 +13,42 @@ from sklearn.model_selection import train_test_split
 
 from super_rsm.common.exceptions import DataValidationError
 from super_rsm.common.types import ArrayLike
+from super_rsm.models.diagnostics import compute_input_groups
+
+
+def _split_arrays(
+    X: np.ndarray,
+    y: np.ndarray,
+    test_size: float,
+    random_state: Optional[int],
+    shuffle: bool,
+    split_by_groups: bool,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split (X, y) either row-wise or grouped by unique input parameter combinations."""
+    if test_size < 0.0 or test_size >= 1.0:
+        raise DataValidationError(f"test_size must be in [0.0, 1.0), got {test_size}")
+    if test_size <= 0.0 or len(X) <= 1:
+        n_feat = X.shape[1] if X.ndim == 2 else 0
+        return X, np.empty((0, n_feat), dtype=float), y, np.empty((0,), dtype=float)
+
+    if not split_by_groups:
+        return train_test_split(X, y, test_size=test_size, random_state=random_state, shuffle=shuffle)
+
+    group_ids, n_groups = compute_input_groups(X)
+    if n_groups < 2:
+        raise DataValidationError(
+            "Cannot split by unique input combinations when fewer than 2 unique input combinations exist."
+        )
+    if n_groups == len(X):
+        return train_test_split(X, y, test_size=test_size, random_state=random_state, shuffle=shuffle)
+
+    unique_groups = np.arange(n_groups)
+    train_groups, test_groups = train_test_split(
+        unique_groups, test_size=test_size, random_state=random_state, shuffle=shuffle
+    )
+    train_idx = np.concatenate([np.flatnonzero(group_ids == g) for g in train_groups])
+    test_idx = np.concatenate([np.flatnonzero(group_ids == g) for g in test_groups])
+    return X[train_idx], X[test_idx], y[train_idx], y[test_idx]
 
 
 @dataclass
@@ -24,6 +60,7 @@ class RSMDataset:
     y_test: np.ndarray = field(default_factory=lambda: np.empty((0,), dtype=float))
     feature_names: List[str] = field(default_factory=list)
     target_name: str = "y"
+    split_by_groups: bool = False
 
     def __post_init__(self) -> None:
         self.X_train = np.asarray(self.X_train, dtype=float)
@@ -83,6 +120,7 @@ class RSMDataset:
         test_size: float = 0.2,
         random_state: Optional[int] = 42,
         shuffle: bool = True,
+        split_by_groups: bool = False,
     ) -> "RSMDataset":
         """Construct RSMDataset directly from a pandas DataFrame."""
         if not isinstance(df, pd.DataFrame):
@@ -102,17 +140,17 @@ class RSMDataset:
 
         X = df[list(input_columns)].to_numpy(dtype=float)
         y = df[output_column].to_numpy(dtype=float).ravel()
-        if test_size < 0.0 or test_size >= 1.0:
-            raise DataValidationError(f"test_size must be in [0.0, 1.0), got {test_size}")
+        X_tr, X_te, y_tr, y_te = _split_arrays(X, y, test_size, random_state, shuffle, split_by_groups)
 
-        if test_size > 0.0 and len(df) > 1:
-            X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=test_size, random_state=random_state, shuffle=shuffle)
-        else:
-            X_tr, y_tr = X, y
-            X_te = np.empty((0, X.shape[1]), dtype=float)
-            y_te = np.empty((0,), dtype=float)
-
-        return cls(X_train=X_tr, y_train=y_tr, X_test=X_te, y_test=y_te, feature_names=list(input_columns), target_name=str(output_column))
+        return cls(
+            X_train=X_tr,
+            y_train=y_tr,
+            X_test=X_te,
+            y_test=y_te,
+            feature_names=list(input_columns),
+            target_name=str(output_column),
+            split_by_groups=bool(split_by_groups),
+        )
 
     @classmethod
     def from_arrays(
@@ -143,20 +181,22 @@ class RSMDataset:
         shuffle: bool = True,
         feature_names: Optional[Sequence[str]] = None,
         target_name: str = "y",
+        split_by_groups: bool = False,
     ) -> "RSMDataset":
         """Construct RSMDataset from unsplit arrays with automated splitting."""
         X_arr = np.asarray(X, dtype=float)
         y_arr = np.asarray(y, dtype=float).ravel()
-        if test_size < 0.0 or test_size >= 1.0:
-            raise DataValidationError(f"test_size must be in [0.0, 1.0), got {test_size}")
-        if test_size > 0.0 and len(X_arr) > 1:
-            X_tr, X_te, y_tr, y_te = train_test_split(X_arr, y_arr, test_size=test_size, random_state=random_state, shuffle=shuffle)
-        else:
-            X_tr, y_tr = X_arr, y_arr
-            n_feat = X_arr.shape[1] if X_arr.ndim == 2 else 0
-            X_te, y_te = np.empty((0, n_feat), dtype=float), np.empty((0,), dtype=float)
+        X_tr, X_te, y_tr, y_te = _split_arrays(X_arr, y_arr, test_size, random_state, shuffle, split_by_groups)
         names = list(feature_names) if feature_names is not None else [f"x{i + 1}" for i in range(X_arr.shape[1])]
-        return cls(X_train=X_tr, y_train=y_tr, X_test=X_te, y_test=y_te, feature_names=names, target_name=target_name)
+        return cls(
+            X_train=X_tr,
+            y_train=y_tr,
+            X_test=X_te,
+            y_test=y_te,
+            feature_names=names,
+            target_name=target_name,
+            split_by_groups=bool(split_by_groups),
+        )
 
     @property
     def num_train(self) -> int: return len(self.X_train)
@@ -176,6 +216,14 @@ class RSMDataset:
     def n_features(self) -> int: return self.X_train.shape[1]
     @property
     def has_test_set(self) -> bool: return len(self.X_test) > 0
+    @property
+    def n_unique_train(self) -> int: return compute_input_groups(self.X_train)[1]
+    @property
+    def n_unique_test(self) -> int: return compute_input_groups(self.X_test)[1] if self.has_test_set else 0
+    @property
+    def n_unique_total(self) -> int: return compute_input_groups(self.X_all)[1]
+    @property
+    def has_train_replicates(self) -> bool: return self.n_train > self.n_unique_train
     @property
     def X_all(self) -> np.ndarray: return np.vstack([self.X_train, self.X_test]) if self.has_test_set else self.X_train
     @property

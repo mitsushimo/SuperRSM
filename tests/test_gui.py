@@ -170,6 +170,16 @@ def test_controller_report_formatting_and_constraint_evaluation():
     assert "Adjusted R²:" in report
     assert "ANOVA Table:" in report
     assert "Model Coefficients:" in report
+    assert "Training Set Fit:" in report
+
+    # Verify RidgeCV, Bayesian Ridge, ElasticNetCV, and SVR report formatting with split_by_groups=True
+    for method in ["RidgeCV", "Bayesian Ridge", "ElasticNetCV", "SVR"]:
+        res_m = AppController.execute_fit(df, ["x1", "x2"], "y", method, 0.2, {}, split_by_groups=True)
+        rep_m = AppController.format_full_report(res_m, ["x1", "x2"], "y")
+        assert method in rep_m
+        assert "Grouped by Unique Input Combinations" in rep_m
+        assert "ANOVA Table:" in rep_m
+        assert "Model Diagnostics & Hyperparameters:" in rep_m
 
     raw_constraints = [
         {"coeffs": {"x1": 1.0, "x2": 1.0}, "operator": "<=", "bound": 4.0, "expression_str": "x1 + x2 <= 4"},

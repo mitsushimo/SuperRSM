@@ -4,7 +4,7 @@ Discovers analytical closed-form mathematical equations with variable mapping.
 """
 
 import re
-from typing import Any, ClassVar, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 from gplearn.functions import make_function
 from gplearn.genetic import SymbolicRegressor
 import numpy as np
@@ -13,6 +13,7 @@ from sklearn.metrics import mean_squared_error, r2_score
 from super_rsm.common.config import HyperparameterSpec, ModelMetadata
 from super_rsm.common.types import ModelCategory
 from super_rsm.models.base import BaseRSMModel, ModelMetrics
+from super_rsm.models.diagnostics import build_anova_table, compute_factor_sensitivity
 from super_rsm.models.registry import register_model
 
 
@@ -35,9 +36,9 @@ class SymbolicRegressorRSMModel(BaseRSMModel):
         description="Symbolic regression using genetic programming (gplearn).",
         supports_uncertainty=False,
         supports_coefficients=False,
-        supports_feature_importance=False,
+        supports_feature_importance=True,
         supports_formula=True,
-        has_anova=False,
+        has_anova=True,
         hyperparameters=[
             HyperparameterSpec("population_size", "Population Size", int, default=2000, min_val=50, max_val=20000, step=50,
                                tooltip="Number of candidate formula programs per generation"),
@@ -70,6 +71,7 @@ class SymbolicRegressorRSMModel(BaseRSMModel):
         self.parsimony_coefficient = parsimony_coefficient
         self.random_state = random_state
         self.model: Optional[SymbolicRegressor] = None
+        self._feature_importance: Optional[Dict[str, float]] = None
 
     def fit(
         self,
@@ -116,11 +118,32 @@ class SymbolicRegressorRSMModel(BaseRSMModel):
         self.is_fitted = True
 
         y_pred = self.model.predict(X_arr)
-        mse = mean_squared_error(y_arr, y_pred)
+        mse = float(mean_squared_error(y_arr, y_pred))
         rmse = float(np.sqrt(mse))
-        r2 = r2_score(y_arr, y_pred)
-        self.metrics = ModelMetrics(r2=float(r2), rmse=rmse, mse=float(mse))
+        mae = float(np.mean(np.abs(y_arr - y_pred)))
+        r2 = float(r2_score(y_arr, y_pred))
+
+        prog = getattr(self.model, "_program", None)
+        anova_df = build_anova_table(y_arr, y_pred, df_model=None, X=X_arr)
+        self._feature_importance = compute_factor_sensitivity(self.predict, X_arr, self.feature_names)
+
+        self.metrics = ModelMetrics(
+            r2=r2,
+            rmse=rmse,
+            mse=mse,
+            mae=mae,
+            anova_table=anova_df,
+            custom_metrics={
+                "Program Nodes (Length)": str(getattr(prog, "length_", "N/A")),
+                "Program Tree Depth": str(getattr(prog, "depth_", "N/A")),
+            },
+        )
         return self
+
+    def get_feature_importance(self) -> Optional[Dict[str, float]]:
+        """Return first-order main-effect variance sensitivity across input factors."""
+        self._ensure_fitted()
+        return self._feature_importance
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Compute predicted output using the evolved symbolic program tree."""

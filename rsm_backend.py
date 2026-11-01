@@ -26,6 +26,9 @@ from super_rsm.models import (
     RidgeCVRSMModel,
     SymbolicRegressorRSMModel,
     PolynomialOLSModel,
+    BayesianRidgeRSMModel,
+    ElasticNetCVRSMModel,
+    SVRRSMModel,
 )
 from super_rsm.models.ridge import _generate_polynomial_term_names
 
@@ -62,4 +65,7 @@ __all__ = [
     "RidgeCVRSMModel",
     "SymbolicRegressorRSMModel",
     "PolynomialOLSModel",
+    "BayesianRidgeRSMModel",
+    "ElasticNetCVRSMModel",
+    "SVRRSMModel",
 ]

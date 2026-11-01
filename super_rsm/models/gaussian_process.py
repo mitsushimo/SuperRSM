@@ -3,7 +3,7 @@ Gaussian Process Regressor (Kriging) with uncertainty estimation.
 Supports Ordinary Kriging (degree=0) and Universal Kriging (degree>0).
 """
 
-from typing import Any, ClassVar, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import DotProduct, RBF, WhiteKernel
@@ -14,6 +14,7 @@ from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from super_rsm.common.config import HyperparameterSpec, ModelMetadata
 from super_rsm.common.types import ModelCategory
 from super_rsm.models.base import BaseRSMModel, ModelMetrics
+from super_rsm.models.diagnostics import build_anova_table, compute_factor_sensitivity
 from super_rsm.models.registry import register_model
 
 
@@ -31,9 +32,9 @@ class GaussianProcessRSMModel(BaseRSMModel):
         description="Gaussian Process Regressor supporting Ordinary (degree=0) and Universal Kriging (degree>0).",
         supports_uncertainty=True,
         supports_coefficients=False,
-        supports_feature_importance=False,
+        supports_feature_importance=True,
         supports_formula=False,
-        has_anova=False,
+        has_anova=True,
         hyperparameters=[
             HyperparameterSpec("degree_fit", "Polynomial Degree", int, default=2, min_val=0, max_val=4, step=1,
                                tooltip="Polynomial trend degree (0=Ordinary Kriging, >0=Universal Kriging)"),
@@ -71,6 +72,7 @@ class GaussianProcessRSMModel(BaseRSMModel):
         self.n_restarts_optimizer = n_restarts_optimizer
         self.random_state = random_state
         self.pipeline: Optional[Any] = None
+        self._feature_importance: Optional[Dict[str, float]] = None
 
     def fit(
         self,
@@ -127,11 +129,34 @@ class GaussianProcessRSMModel(BaseRSMModel):
         self.is_fitted = True
 
         y_pred = self.pipeline.predict(X_arr)
-        mse = mean_squared_error(y_arr, y_pred)
+        mse = float(mean_squared_error(y_arr, y_pred))
         rmse = float(np.sqrt(mse))
-        r2 = r2_score(y_arr, y_pred)
-        self.metrics = ModelMetrics(r2=float(r2), rmse=rmse, mse=float(mse))
+        mae = float(np.mean(np.abs(y_arr - y_pred)))
+        r2 = float(r2_score(y_arr, y_pred))
+
+        gp_step = self.pipeline.named_steps["gaussianprocessregressor"]
+        lml = float(getattr(gp_step, "log_marginal_likelihood_value_", np.nan))
+        anova_df = build_anova_table(y_arr, y_pred, df_model=None, X=X_arr)
+        self._feature_importance = compute_factor_sensitivity(self.predict, X_arr, self.feature_names)
+
+        self.metrics = ModelMetrics(
+            r2=r2,
+            rmse=rmse,
+            mse=mse,
+            mae=mae,
+            anova_table=anova_df,
+            custom_metrics={
+                "Kriging Mode": "Ordinary Kriging (deg=0)" if self.degree_fit == 0 else f"Universal Kriging (deg={self.degree_fit})",
+                "Optimized Kernel": str(getattr(gp_step, "kernel_", "")),
+                "Log-Marginal Likelihood": f"{lml:.4f}" if np.isfinite(lml) else "N/A",
+            },
+        )
         return self
+
+    def get_feature_importance(self) -> Optional[Dict[str, float]]:
+        """Return first-order main-effect variance sensitivity across input factors."""
+        self._ensure_fitted()
+        return self._feature_importance
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Compute predicted mean output for input coordinates X."""

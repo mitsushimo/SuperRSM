@@ -87,6 +87,9 @@ def test_dataset_validation_errors(sample_df):
 @pytest.mark.parametrize("method, kwargs", [
     ("Polynomial OLS", {"degree_fit": 2}),
     ("RidgeCV", {"degree_fit": 2}),
+    ("Bayesian Ridge", {"degree_fit": 2}),
+    ("ElasticNetCV", {"degree_fit": 2, "l1_ratio": 0.5}),
+    ("SVR", {"kernel": "rbf", "C": 10.0, "epsilon": 0.05}),
     ("Gaussian Process", {"degree_fit": 0, "noise_level": 0.1}),
     ("Genetic Programming", {"population_size": 30, "generations": 2}),
 ])
@@ -216,3 +219,47 @@ def test_headless_import_and_execution(sample_df):
             assert p[0] == pytest.approx(3.0, abs=0.2) and v == pytest.approx(5.0, abs=0.5)
     finally:
         sys.modules.update(saved_mods)
+
+
+# -----------------------------------------------------------------------------
+# 7. Replicate-Aware Train-Test Split (split_by_groups) Tests
+# -----------------------------------------------------------------------------
+
+def test_replicate_grouped_train_test_split():
+    rng = np.random.default_rng(42)
+    # 20 unique input parameter combinations, 4 replicates each = 80 total rows
+    X_unique = rng.uniform(0.0, 10.0, size=(20, 2))
+    X_rep = np.repeat(X_unique, 4, axis=0)
+    y_rep = (X_rep[:, 0] - 3.0) ** 2 + (X_rep[:, 1] - 4.0) ** 2 + rng.normal(0.0, 0.1, size=80)
+    df_rep = pd.DataFrame({"x1": X_rep[:, 0], "x2": X_rep[:, 1], "y": y_rep})
+
+    ds_grouped = RSMDataset.from_dataframe(
+        df_rep, ["x1", "x2"], "y", test_size=0.20, random_state=42, split_by_groups=True
+    )
+    assert ds_grouped.split_by_groups is True
+    assert ds_grouped.n_unique_total == 20
+    assert ds_grouped.n_unique_test == 4
+    assert ds_grouped.n_unique_train == 16
+    assert ds_grouped.n_test == 16  # 4 unique test combinations * 4 replicates
+    assert ds_grouped.n_train == 64  # 16 unique train combinations * 4 replicates
+    assert ds_grouped.has_train_replicates is True
+
+    # Ensure zero overlap of unique input parameter combinations between train and test sets
+    train_tuples = {tuple(np.round(row, 8)) for row in ds_grouped.X_train}
+    test_tuples = {tuple(np.round(row, 8)) for row in ds_grouped.X_test}
+    assert len(train_tuples.intersection(test_tuples)) == 0
+
+    # Pipeline wrapper rsm_fromDF with split_by_groups=True
+    res = rsm_fromDF(
+        df_rep, ["x1", "x2"], "y", method="Bayesian Ridge", degree_fit=2, test_size=0.20, split_by_groups=True
+    )
+    assert res.dataset.split_by_groups is True
+    assert "Grouped by Unique Input Combinations" in res.summary()
+    assert "Lack of Fit" in res.summary()
+    assert "Pure Error" in res.summary()
+
+    # Validation error when only 1 unique input combination exists
+    df_single_group = pd.DataFrame({"x1": [1.0, 1.0, 1.0], "x2": [2.0, 2.0, 2.0], "y": [5.0, 5.1, 4.9]})
+    with pytest.raises(DataValidationError, match="Cannot split by unique input combinations"):
+        RSMDataset.from_dataframe(df_single_group, ["x1", "x2"], "y", test_size=0.2, split_by_groups=True)
+

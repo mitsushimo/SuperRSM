@@ -94,6 +94,7 @@ class RSMApp(RSMWorkflowMixin, tk.Tk):
         self.model_view.pack(fill=tk.X, pady=(0, 8))
         self.method_var = self.model_view.method_var
         self.test_size_var = self.model_view.test_size_var
+        self.split_by_groups_var = self.model_view.split_by_groups_var
 
         self.bounds_view = BoundsView(
             left_pane,
@@ -221,6 +222,7 @@ class RSMApp(RSMWorkflowMixin, tk.Tk):
             self.method_var.get(),
             hparams,
             test_size,
+            bool(self.split_by_groups_var.get()),
         )
 
     def _check_fit_settings_staleness(self) -> None:

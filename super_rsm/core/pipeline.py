@@ -64,6 +64,7 @@ def fit_rsm(
                 term_t_stats=train_metrics.term_t_stats if train_metrics else None,
                 term_std_errors=train_metrics.term_std_errors if train_metrics else None,
                 anova_table=train_metrics.anova_table if train_metrics else None,
+                custom_metrics=dict(train_metrics.custom_metrics) if (train_metrics and train_metrics.custom_metrics) else {},
             )
         except Exception as exc:
             raise ModelFitError(f"Failed to evaluate test metrics for model '{method}': {exc}") from exc
@@ -82,6 +83,7 @@ def fit_rsm2(
     feature_names: Optional[List[str]] = None,
     test_size: float = 0.2,
     random_state: Optional[int] = 42,
+    split_by_groups: bool = False,
     **kwargs: Any,
 ) -> RSMResult:
     """Fit a Response Surface Model from array-like inputs (pre-split or unsplit)."""
@@ -100,6 +102,7 @@ def fit_rsm2(
             test_size=test_size,
             random_state=random_state,
             feature_names=feature_names,
+            split_by_groups=split_by_groups,
         )
     return fit_rsm(dataset=dataset, method=method, **kwargs)
 
@@ -111,6 +114,7 @@ def rsm_fromDF(
     method: str = "Polynomial OLS",
     test_size: float = 0.2,
     random_state: Optional[int] = 42,
+    split_by_groups: bool = False,
     **kwargs: Any,
 ) -> RSMResult:
     """Fit a Response Surface Model directly from a pandas DataFrame."""
@@ -120,6 +124,7 @@ def rsm_fromDF(
         output_column=output_column,
         test_size=test_size,
         random_state=random_state,
+        split_by_groups=split_by_groups,
     )
     return fit_rsm(dataset=dataset, method=method, **kwargs)
 

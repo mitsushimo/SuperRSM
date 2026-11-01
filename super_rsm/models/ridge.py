@@ -13,6 +13,7 @@ from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from super_rsm.common.config import HyperparameterSpec, ModelMetadata
 from super_rsm.common.types import ModelCategory
 from super_rsm.models.base import BaseRSMModel, ModelMetrics
+from super_rsm.models.diagnostics import build_anova_table, compute_regularized_term_stats
 from super_rsm.models.registry import register_model
 
 
@@ -46,7 +47,7 @@ class RidgeCVRSMModel(BaseRSMModel):
         supports_coefficients=True,
         supports_feature_importance=True,
         supports_formula=True,
-        has_anova=False,
+        has_anova=True,
         hyperparameters=[
             HyperparameterSpec("degree_fit", "Polynomial Degree", int, default=2, min_val=1, max_val=4, step=1,
                                tooltip="Degree of polynomial feature expansions"),
@@ -122,10 +123,43 @@ class RidgeCVRSMModel(BaseRSMModel):
         self.unscaled_intercept = float(ridge.intercept_ - np.dot(self.unscaled_coeffs, scaler.mean_))
 
         y_pred = self.pipeline.predict(X_arr)
-        mse = mean_squared_error(y_arr, y_pred)
+        mse = float(mean_squared_error(y_arr, y_pred))
         rmse = float(np.sqrt(mse))
-        r2 = r2_score(y_arr, y_pred)
-        self.metrics = ModelMetrics(r2=float(r2), rmse=rmse, mse=float(mse))
+        mae = float(np.mean(np.abs(y_arr - y_pred)))
+        r2 = float(r2_score(y_arr, y_pred))
+
+        Z_std = scaler.transform(poly.transform(X_arr))
+        alpha_opt = float(ridge.alpha_)
+        diag = compute_regularized_term_stats(
+            Z_std=Z_std,
+            y=y_arr,
+            y_pred=y_pred,
+            unscaled_intercept=self.unscaled_intercept,
+            unscaled_coeffs=self.unscaled_coeffs,
+            scaler_mean=scaler.mean_,
+            scaler_scale=safe_scale,
+            term_names=self.term_names,
+            l2_penalty=alpha_opt,
+        )
+        anova_df = build_anova_table(y_arr, y_pred, df_model=diag["df_model"], X=X_arr)
+
+        self.metrics = ModelMetrics(
+            r2=r2,
+            adj_r2=diag["adj_r2"],
+            rmse=rmse,
+            mse=mse,
+            mae=mae,
+            aic=diag["aic"],
+            bic=diag["bic"],
+            term_p_values=diag["term_p_values"],
+            term_t_stats=diag["term_t_stats"],
+            term_std_errors=diag["term_std_errors"],
+            anova_table=anova_df,
+            custom_metrics={
+                "Selected Alpha (α*)": f"{alpha_opt:.5g}",
+                "Effective Model DF": f"{diag['df_model']:.2f}",
+            },
+        )
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:

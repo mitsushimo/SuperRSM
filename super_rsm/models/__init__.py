@@ -22,6 +22,9 @@ from super_rsm.models.gaussian_process import GaussianProcessRSMModel
 from super_rsm.models.ridge import RidgeCVRSMModel
 from super_rsm.models.symbolic import SymbolicRegressorRSMModel
 from super_rsm.models.polynomial_ols import PolynomialOLSModel
+from super_rsm.models.bayesian_ridge import BayesianRidgeRSMModel
+from super_rsm.models.elastic_net import ElasticNetCVRSMModel
+from super_rsm.models.svr import SVRRSMModel
 
 __all__ = [
     # Base and grid evaluation
@@ -40,4 +43,7 @@ __all__ = [
     "RidgeCVRSMModel",
     "SymbolicRegressorRSMModel",
     "PolynomialOLSModel",
+    "BayesianRidgeRSMModel",
+    "ElasticNetCVRSMModel",
+    "SVRRSMModel",
 ]
