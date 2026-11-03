@@ -16,3 +16,7 @@ gplearn>=0.4.2
 matplotlib>=3.7.0
 seaborn>=0.12.0
 
+# Rich Markdown / HTML report rendering
+markdown>=3.4.0
+tkinterweb>=3.24.0
+

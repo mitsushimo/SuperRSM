@@ -27,10 +27,11 @@ from super_rsm.gui.views import (
     ModelConfigView,
     ResultsView,
 )
+from super_rsm.gui.menu_actions import RSMMenuMixin
 from super_rsm.gui.workflow_actions import RSMWorkflowMixin
 
 
-class RSMApp(RSMWorkflowMixin, tk.Tk):
+class RSMApp(RSMMenuMixin, RSMWorkflowMixin, tk.Tk):
     """Main desktop GUI window for SuperRSM."""
 
     def __init__(self, async_tasks: bool = True):
@@ -59,6 +60,7 @@ class RSMApp(RSMWorkflowMixin, tk.Tk):
     opt_params_dict = property(lambda self: self.state.opt_params_dict)
 
     def _build_layout(self) -> None:
+        self._build_menubar()
         self.header_view = HeaderView(self, fonts=self.fonts)
         self.header_view.pack(fill=tk.X)
 
@@ -250,6 +252,7 @@ class RSMApp(RSMWorkflowMixin, tk.Tk):
         self.results_view.eval_run_btn.config(state="disabled")
         self.results_view.eval_pred_var.set("Predicted Output:  —")
         self.results_view.eval_unc_var.set("Fit a surrogate model to evaluate predictions at custom parameter combinations.")
+        self.results_view.set_report_text("")
         self.kpi_strip.reset_all()
 
     def _on_opt_goal_change(self) -> None:

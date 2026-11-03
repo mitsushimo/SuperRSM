@@ -15,6 +15,7 @@ from super_rsm.gui.controller import AppController
 from super_rsm.gui.dialogs.constraint_dialog import LinearConstraintDialog
 from super_rsm.gui.dialogs.plot_config_dialog import PlotConfigDialog
 from super_rsm.gui.styles.palette import PALETTE
+from super_rsm.visualization.diagnostic_plots import build_report_figures
 
 
 class RSMWorkflowMixin:
@@ -38,18 +39,18 @@ class RSMWorkflowMixin:
         self.state.set_status("Cleared optimization bounds.")
 
     def _render_full_report(self) -> None:
-        self.results_view.set_report_text(
-            AppController.format_full_report(
-                self.state.result, self.state.current_input_cols, self.state.current_output_col, self.state.last_opt_report_text
-            )
+        md_text = AppController.format_markdown_report(
+            self.state.result, self.state.current_input_cols, self.state.current_output_col, self.state.last_opt_report_text
         )
+        figures = build_report_figures(self.state.result)
+        self.results_view.set_report_text(md_text, figures=figures)
 
     def copy_results_to_clipboard(self) -> None:
-        content = self.results_text.get("1.0", tk.END).strip()
+        content = self.results_view.report_viewer.get_markdown_text().strip() or self.results_text.get("1.0", tk.END).strip()
         if content:
             self.clipboard_clear()
             self.clipboard_append(content)
-            self.state.set_status("Copied model report to clipboard.")
+            self.state.set_status("Copied Markdown model report to clipboard.")
 
     def fill_eval_from_optimal(self) -> None:
         if not self.state.opt_params_dict:
@@ -278,15 +279,19 @@ class RSMWorkflowMixin:
                 self.kpi_status.set_value("Check Status", f"{n_violated} constraint violation(s)" if n_violated else "Optimizer warning", PALETTE["warning"])
 
             opt_lines = [
-                "=== RSM Optimization Results ===\n\n",
-                f"Optimization Goal: {goal} '{output_col}'\n",
-                "Optimizer Status: Converged successfully\n\n" if opt_res.success else f"Optimizer Status: Warning - {opt_res.message}\n\n",
-                "Optimized Input Parameters:\n",
-                *[f"  - {col}: {val:.6f}\n" for col, val in zip(input_cols, opt_params)],
-                f"\nOptimized ({'Maximum' if is_maximize else 'Minimum'}) Output Value [{output_col}]: {opt_val:.6f}\n",
+                "## RSM Optimization Results\n\n",
+                f"- **Optimization Goal**: **{goal}** `{output_col}`\n",
+                "- **Optimizer Status**: **Converged successfully**\n" if opt_res.success else f"- **Optimizer Status**: **Warning** — {opt_res.message}\n",
+                f"- **Optimized ({'Maximum' if is_maximize else 'Minimum'}) Output Value [`{output_col}`]**: **{opt_val:.6f}**\n\n",
+                "| Parameter | Optimal Value | Applied Bounds | Dataset [Min, Max] |\n",
+                "| :--- | ---: | :---: | :---: |\n",
+                *[f"| **{col}** | {val:.6f} | {bounds_display.get(col, 'Unconstrained')} | {self.state.get_col_range_str(col)} |\n" for col, val in zip(input_cols, opt_params)],
             ]
-            if c_lines:
-                opt_lines.extend(["\nLinear Constraint Verification:\n", *c_lines])
+            if rows:
+                opt_lines.extend([
+                    "\n### Linear Constraint Verification\n\n",
+                    *[f"- **[#{r_id}]** `{expr}` — Evaluated LHS = `{lhs:.6f}` (**{st_str}**)\n" for r_id, expr, lhs, st_str, _ in rows],
+                ])
             self.state.last_opt_report_text = "".join(opt_lines)
             self._render_full_report()
             self.state.set_status(f"Optimization complete — {self.state.result.method} ({'Max' if is_maximize else 'Min'} {output_col} = {opt_val:.6g}).")

@@ -7,8 +7,9 @@ Tab 3: Evaluate Model at Custom Point & History).
 
 import tkinter as tk
 from tkinter import ttk
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
+from super_rsm.gui.components.report_viewer import ReportViewer
 from super_rsm.gui.components.scrollable_panel import ScrollablePanel
 from super_rsm.gui.components.treeview_helper import create_scrolled_treeview
 from super_rsm.gui.styles.palette import PALETTE
@@ -106,25 +107,9 @@ class ResultsView(ttk.Notebook):
             report_toolbar, text="Copy Report", style="Small.TButton", command=on_copy_report
         ).pack(side=tk.RIGHT)
 
-        text_wrap = tk.Frame(report_tab, bg=PALETTE["border"], bd=1, relief=tk.FLAT)
-        text_wrap.pack(fill=tk.BOTH, expand=True)
-        text_scroll = ttk.Scrollbar(text_wrap, orient=tk.VERTICAL)
-        self.results_text = tk.Text(
-            text_wrap,
-            height=12,
-            state="disabled",
-            bg=PALETTE["bg_subtle"],
-            fg=PALETTE["text_main"],
-            font=self.fonts["mono"],
-            bd=0,
-            padx=10,
-            pady=8,
-            wrap=tk.WORD,
-            yscrollcommand=text_scroll.set,
-        )
-        text_scroll.config(command=self.results_text.yview)
-        self.results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.report_viewer = ReportViewer(report_tab, fonts=self.fonts)
+        self.report_viewer.pack(fill=tk.BOTH, expand=True)
+        self.results_text = self.report_viewer.text_widget
 
     def _build_eval_tab(
         self,
@@ -272,10 +257,6 @@ class ResultsView(ttk.Notebook):
             eval_entry.bind("<Return>", lambda e: self.on_eval_point())
             self.eval_entries[col_name] = eval_var
 
-    def set_report_text(self, text: str) -> None:
-        self.results_text.config(state="normal")
-        self.results_text.delete("1.0", tk.END)
-        if text:
-            self.results_text.insert(tk.END, text)
-        self.results_text.config(state="disabled")
+    def set_report_text(self, text: str, figures: Optional[Dict[str, Any]] = None) -> None:
+        self.report_viewer.set_report(text, figures=figures)
 

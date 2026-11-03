@@ -18,6 +18,7 @@ class AppState:
 
     df: Optional[pd.DataFrame] = None
     filepath: str = ""
+    project_filepath: str = ""
     current_input_cols: List[str] = field(default_factory=list)
     previous_input_cols: List[str] = field(default_factory=list)
     current_output_col: str = ""

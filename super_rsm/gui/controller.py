@@ -15,7 +15,7 @@ import pandas as pd
 from super_rsm.common.config import ConstraintSpec
 from super_rsm.common.types import ConstraintOperator
 from super_rsm.core.pipeline import rsm_fromDF
-from super_rsm.core.reporting import format_full_report_text
+from super_rsm.core.reporting import format_full_report_markdown, format_full_report_text
 from super_rsm.core.result import RSMResult
 from super_rsm.gui.state import AppState
 
@@ -204,4 +204,14 @@ class AppController:
     ) -> str:
         """Format complete diagnostic report including coefficients, formula, p-values, and ANOVA."""
         return format_full_report_text(result, input_cols, output_col, last_opt_report_text)
+
+    @staticmethod
+    def format_markdown_report(
+        result: Optional[RSMResult],
+        input_cols: List[str],
+        output_col: str,
+        last_opt_report_text: str = "",
+    ) -> str:
+        """Format complete diagnostic report in Markdown format."""
+        return format_full_report_markdown(result, input_cols, output_col, last_opt_report_text)
 

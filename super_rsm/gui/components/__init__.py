@@ -12,6 +12,7 @@ from super_rsm.gui.components.treeview_helper import (
     treeview_to_tsv,
 )
 from super_rsm.gui.components.param_form import DynamicParamForm
+from super_rsm.gui.components.report_viewer import ReportViewer, compile_markdown_to_html
 
 __all__ = [
     "KPICard",
@@ -20,5 +21,7 @@ __all__ = [
     "clear_treeview",
     "treeview_to_tsv",
     "DynamicParamForm",
+    "ReportViewer",
+    "compile_markdown_to_html",
 ]
 

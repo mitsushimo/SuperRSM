@@ -12,6 +12,15 @@ from super_rsm.visualization.contour import (
     validate_multi_contour_inputs,
     plot_a_function,
 )
+from super_rsm.visualization.diagnostic_plots import (
+    build_report_figures,
+    create_importance_plot,
+    create_parity_plot,
+    create_significance_plot,
+    figure_to_base64_png,
+    figure_to_png_bytes,
+    save_figure,
+)
 from super_rsm.visualization.service import VisualizationService
 
 __all__ = [
@@ -23,4 +32,11 @@ __all__ = [
     "validate_multi_contour_inputs",
     "plot_a_function",
     "default_plot_settings",
+    "build_report_figures",
+    "create_importance_plot",
+    "create_parity_plot",
+    "create_significance_plot",
+    "figure_to_base64_png",
+    "figure_to_png_bytes",
+    "save_figure",
 ]
