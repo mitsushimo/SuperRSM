@@ -6,6 +6,7 @@ and seamless backward compatibility for legacy configs and visualize_rsm().
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 
@@ -66,16 +67,60 @@ class VisualizationService:
             else "Y"
         )
 
+        render_unc = bool(settings.plot_uncertainty and grid_result.U_array)
+        ps_main = PlotSettings.from_dict(settings.to_dict())
+        if render_unc:
+            ps_main.show_plot = False
+
         fig, axes = MultiContourEngine.render(
             grid_result=grid_result,
-            settings=settings,
+            settings=ps_main,
             title=title,
             xlabel=x_name,
             ylabel=y_name,
             label_array=label_array,
-            show=show,
+            show=False if render_unc else show,
             save_path=save_path,
+            render_uncertainty=False,
+            uncertainty_overlay=False,
         )
+
+        if render_unc:
+            ps_unc = PlotSettings.from_dict(settings.to_dict())
+            if ps_unc.colorbar_label:
+                ps_unc.colorbar_label = f"{ps_unc.colorbar_label} (Uncertainty)"
+            if ps_unc.scatter_vmin is None or ps_unc.scatter_vmax is None:
+                if grid_config.y_scatter is not None and len(grid_config.y_scatter) > 0:
+                    s_min, s_max = float(np.min(grid_config.y_scatter)), float(np.max(grid_config.y_scatter))
+                else:
+                    s_min = min(float(np.min(arr)) for row in grid_result.Z_array for arr in row)
+                    s_max = max(float(np.max(arr)) for row in grid_result.Z_array for arr in row)
+                if np.isclose(s_min, s_max):
+                    s_min, s_max = s_min - 1e-6, s_max + 1e-6
+                ps_unc.scatter_vmin = s_min
+                ps_unc.scatter_vmax = s_max
+
+            unc_save_path = (
+                str(Path(save_path).with_name(f"{Path(save_path).stem}_uncertainty{Path(save_path).suffix}"))
+                if save_path
+                else None
+            )
+            unc_title = f"{title} (Uncertainty)" if title else "Uncertainty"
+            fig_unc, axes_unc = MultiContourEngine.render(
+                grid_result=grid_result,
+                settings=ps_unc,
+                title=unc_title,
+                xlabel=x_name,
+                ylabel=y_name,
+                label_array=label_array,
+                show=show,
+                save_path=unc_save_path,
+                render_uncertainty=True,
+                uncertainty_overlay=False,
+            )
+            fig.uncertainty_figure = fig_unc
+            fig.uncertainty_axes = axes_unc
+
         return fig, axes
 
     @classmethod

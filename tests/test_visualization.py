@@ -179,13 +179,31 @@ def test_visualization_service_visualize_result(fitted_ols, tmp_path):
     plt.close(fig_def)
 
 
-def test_result_visualize_rsm_and_uncertainty(fitted_gp, fitted_ols):
-    fig_gp, _ = fitted_gp.visualize_rsm(
+def test_result_visualize_rsm_and_uncertainty(fitted_gp, fitted_ols, tmp_path):
+    save_file = str(tmp_path / "gp_main.png")
+    fig_gp, axes_gp = fitted_gp.visualize_rsm(
         config={"x": (0, np.linspace(0, 5, 10)), "y": (1, np.linspace(0, 5, 10))},
-        plot_settings={"plot_uncertainty": True, "show_plot": False},
+        title="GP Response",
+        plot_settings={
+            "plot_uncertainty": True,
+            "show_colorbar": True,
+            "colorbar_label": "y",
+            "scatter_data": True,
+            "scatter_color_mode": "Output Value (Colormap)",
+            "show_plot": False,
+        },
+        save_path=save_file,
     )
     assert isinstance(fig_gp, matplotlib.figure.Figure)
+    assert hasattr(fig_gp, "uncertainty_figure")
+    fig_unc = fig_gp.uncertainty_figure
+    assert isinstance(fig_unc, matplotlib.figure.Figure)
+    assert fig_unc is not fig_gp
+    assert fig_unc._suptitle.get_text() == "GP Response (Uncertainty)"
+    assert os.path.exists(save_file)
+    assert os.path.exists(str(tmp_path / "gp_main_uncertainty.png"))
     plt.close(fig_gp)
+    plt.close(fig_unc)
 
     with pytest.raises(UncertaintyNotSupportedError):
         fitted_ols.visualize_rsm(

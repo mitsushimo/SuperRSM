@@ -74,7 +74,7 @@ class MultiContourEngine:
         show: bool = False,
         save_path: Optional[str] = None,
         render_uncertainty: bool = False,
-        uncertainty_overlay: bool = True,
+        uncertainty_overlay: bool = False,
     ) -> Tuple[Figure, np.ndarray]:
         """Generate multi-slice contour figure within scoped plt.rc_context."""
         ps = settings if isinstance(settings, PlotSettings) else (

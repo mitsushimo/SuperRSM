@@ -192,7 +192,11 @@ class RSMApp(RSMWorkflowMixin, tk.Tk):
             self.state.filepath = filepath
             columns = list(self.state.df.columns)
             self.data_view.set_columns(columns)
-            self.state.linear_constraints.clear()
+            col_set = set(columns)
+            self.state.linear_constraints[:] = [
+                c for c in self.state.linear_constraints
+                if all(k in col_set for k, v in c.get("coeffs", {}).items() if abs(v) > 1e-12)
+            ]
             self.constraints_view.refresh(self.state.linear_constraints)
             self.clear_eval_history()
             self._invalidate_fitted_model("Dataset loaded — select columns and click 'Fit Surrogate Model'.")
@@ -298,9 +302,6 @@ class RSMApp(RSMWorkflowMixin, tk.Tk):
         current_cols = self.data_view.get_selected_inputs()
         if current_cols != self.state.previous_input_cols and self.state.result is not None:
             self._invalidate_fitted_model("Input factors changed — click 'Fit Surrogate Model'.")
-        if self.state.linear_constraints and set(current_cols) != set(self.state.previous_input_cols):
-            self.state.linear_constraints.clear()
-            self.constraints_view.refresh(self.state.linear_constraints)
         self.state.previous_input_cols = current_cols
         self._update_column_selection_hint()
         self.bounds_view.rebuild_for_columns(current_cols, self.state.get_col_range_str)

@@ -228,3 +228,23 @@ def test_styles_and_fonts_headless():
     assert "accent" in PALETTE
     assert "viridis" in COMMON_CMAPS
 
+
+def test_controller_callback_runs_before_busy_false():
+    """Ensure state.result updated inside on_success is visible to busy_listeners when busy becomes False."""
+    root = DummyRoot()
+    state = AppState()
+    ctrl = AppController(root, None, state)
+
+    observed_results_on_unbusy = []
+    state.add_busy_listener(lambda busy, _msg: observed_results_on_unbusy.append(state.result) if not busy else None)
+
+    def fake_fit():
+        return "fitted_model_object"
+
+    def on_fit_done(res):
+        state.result = res
+
+    ctrl._run_async(fake_fit, on_success=on_fit_done, synchronous=True)
+    assert observed_results_on_unbusy == ["fitted_model_object"]
+
+

@@ -96,9 +96,11 @@ class AppController:
     def _handle_success(self, task_id: int, callback: Optional[Callable[[Any], None]], result: Any) -> None:
         if self._is_shutting_down.is_set() or task_id != self._current_task_id:
             return
-        self.state.set_busy(False)
-        if callback is not None:
-            callback(result)
+        try:
+            if callback is not None:
+                callback(result)
+        finally:
+            self.state.set_busy(False)
 
     def _handle_error(self, task_id: int, callback: Optional[Callable[[Exception], None]], exc: Exception) -> None:
         if self._is_shutting_down.is_set() or task_id != self._current_task_id:

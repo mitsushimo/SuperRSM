@@ -96,13 +96,21 @@ class RSMWorkflowMixin:
                 if col in self.eval_entries:
                     self.eval_entries[col].set(f"{val:.6g}")
 
+    def _refresh_constraints_ui(self) -> None:
+        self.constraints_view.refresh(self.state.linear_constraints)
+        if not self.state.opt_params_dict:
+            clear_treeview(self.constraint_eval_tree)
+            for i, c in enumerate(self.state.linear_constraints, 1):
+                self.constraint_eval_tree.insert("", tk.END, values=(i, c["expression_str"], "—", "Pending"))
+        self._on_busy_changed(self.state.is_busy, self.state.busy_message)
+
     def add_linear_constraint(self) -> None:
         input_cols = self.data_view.get_selected_inputs()
         if not input_cols:
             messagebox.showwarning("Warning", "Please select input columns first before adding constraints.", parent=self)
             return
         LinearConstraintDialog(
-            self, input_cols, on_save_callback=lambda c: (self.state.linear_constraints.append(c), self.constraints_view.refresh(self.state.linear_constraints))
+            self, input_cols, on_save_callback=lambda c: (self.state.linear_constraints.append(c), self._refresh_constraints_ui())
         )
 
     def edit_linear_constraint(self) -> None:
@@ -115,7 +123,7 @@ class RSMWorkflowMixin:
             input_cols = self.data_view.get_selected_inputs()
             def _save(cdata: Dict[str, Any]) -> None:
                 self.state.linear_constraints[idx] = cdata
-                self.constraints_view.refresh(self.state.linear_constraints)
+                self._refresh_constraints_ui()
             LinearConstraintDialog(self, input_cols, existing_constraint=self.state.linear_constraints[idx], on_save_callback=_save)
 
     def delete_linear_constraint(self) -> None:
@@ -126,14 +134,14 @@ class RSMWorkflowMixin:
         idx = int(self.constraints_tree.item(sel[0], "values")[0]) - 1
         if 0 <= idx < len(self.state.linear_constraints):
             del self.state.linear_constraints[idx]
-            self.constraints_view.refresh(self.state.linear_constraints)
+            self._refresh_constraints_ui()
 
     def clear_linear_constraints(self) -> None:
         if self.state.linear_constraints and messagebox.askyesno(
             "Confirm", "Are you sure you want to remove all linear constraints?", parent=self
         ):
             self.state.linear_constraints.clear()
-            self.constraints_view.refresh(self.state.linear_constraints)
+            self._refresh_constraints_ui()
 
     def fit_model(self, synchronous: Optional[bool] = None) -> bool:
         if self.state.df is None:
@@ -179,7 +187,7 @@ class RSMWorkflowMixin:
             self.kpi_opt.set_value("—", f"Target: {output_col}")
             self.kpi_status.set_value("Model Fitted", "Ready to optimize / evaluate", PALETTE["accent"])
             clear_treeview(self.opt_params_tree)
-            clear_treeview(self.constraint_eval_tree)
+            self._refresh_constraints_ui()
             self.model_view.fit_status_var.set(f"✓ Fitted: {result.method} (R² = {result.R_sq:.4f})")
             self.model_view.fit_status_lbl.config(fg=PALETTE["success"])
             self.results_view.eval_pred_var.set(f"Predicted {output_col}:  —")
@@ -235,6 +243,11 @@ class RSMWorkflowMixin:
                 else f"[{f'{min_v:g}' if min_v is not None else '-∞'}, {f'{max_v:g}' if max_v is not None else '+∞'}]"
             )
 
+        for c in self.state.linear_constraints:
+            for k, v in c.get("coeffs", {}).items():
+                if abs(v) > 1e-12 and k not in input_cols:
+                    messagebox.showerror("Error", f"Constraint '{c['expression_str']}' references unselected input '{k}'.", parent=self)
+                    return
         opt_bounds = None if all(b == (None, None) for b in bounds) else bounds
         constraint_specs = AppController.build_constraint_specs(self.state.linear_constraints)
         sync_flag = (not self.async_tasks) if synchronous is None else synchronous
