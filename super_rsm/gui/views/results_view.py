@@ -30,6 +30,7 @@ class ResultsView(ttk.Notebook):
         on_copy_history: Callable[[], None],
         on_clear_history: Callable[[], None],
         on_history_double_click: Callable[[], None],
+        on_edit_plot: Optional[Callable[[str], None]] = None,
         fonts: Optional[Dict[str, tuple]] = None,
     ):
         super().__init__(parent)
@@ -38,7 +39,7 @@ class ResultsView(ttk.Notebook):
         self.on_eval_point = on_eval_point
 
         self._build_tables_tab()
-        self._build_report_tab(on_copy_report)
+        self._build_report_tab(on_copy_report, on_edit_plot)
         self._build_eval_tab(
             on_eval_point,
             on_fill_eval_optimal,
@@ -92,7 +93,11 @@ class ResultsView(ttk.Notebook):
         self.constraint_eval_tree.tag_configure("satisfied", foreground=PALETTE["success"])
         self.constraint_eval_tree.tag_configure("violated", foreground=PALETTE["danger"])
 
-    def _build_report_tab(self, on_copy_report: Callable[[], None]) -> None:
+    def _build_report_tab(
+        self,
+        on_copy_report: Callable[[], None],
+        on_edit_plot: Optional[Callable[[str], None]] = None,
+    ) -> None:
         report_tab = ttk.Frame(self, style="Card.TFrame", padding=10)
         self.add(report_tab, text="  Model Equation & Full Report  ")
 
@@ -107,7 +112,7 @@ class ResultsView(ttk.Notebook):
             report_toolbar, text="Copy Report", style="Small.TButton", command=on_copy_report
         ).pack(side=tk.RIGHT)
 
-        self.report_viewer = ReportViewer(report_tab, fonts=self.fonts)
+        self.report_viewer = ReportViewer(report_tab, fonts=self.fonts, on_edit_plot=on_edit_plot)
         self.report_viewer.pack(fill=tk.BOTH, expand=True)
         self.results_text = self.report_viewer.text_widget
 

@@ -22,12 +22,14 @@ from super_rsm.core.reporting import format_full_report_markdown
 from super_rsm.gui.components.report_viewer import compile_markdown_to_html
 from super_rsm.gui.controller import AppController
 from super_rsm.gui.dialogs.constraint_dialog import format_linear_expression
+from super_rsm.gui.dialogs.inline_plot_edit_dialog import merge_plot_overrides
 from super_rsm.gui.state import AppState
 from super_rsm.gui.styles.palette import PALETTE, COMMON_CMAPS
 from super_rsm.gui.styles.theme import get_ui_fonts
 from super_rsm.visualization.diagnostic_plots import (
     build_report_figures,
     figure_to_png_bytes,
+    get_default_plot_metadata,
     save_figure,
 )
 
@@ -275,11 +277,13 @@ def test_markdown_and_html_report_with_inline_diagnostic_plots(tmp_path):
     assert "| Term | Estimate | Std. Error | t-Value | p-Value | Rel. Importance | Sig. |" in md_report
     assert "| Source | SS | df | MS | F-Value | p-Value |" in md_report
     assert "<!-- PLOT:parity -->" in md_report
-    assert "<!-- PLOT:significance -->" in md_report
+    assert "<!-- PLOT:t_value -->" in md_report
+    assert "<!-- PLOT:p_value -->" in md_report
     assert "<!-- PLOT:importance -->" in md_report
+    assert "<!-- PLOT:significance -->" not in md_report
 
     figures = build_report_figures(result)
-    assert set(figures.keys()) == {"parity", "significance", "importance"}
+    assert set(figures.keys()) == {"parity", "t_value", "p_value", "importance"}
     for key, fig in figures.items():
         png_bytes = figure_to_png_bytes(fig)
         assert png_bytes.startswith(b"\x89PNG")
@@ -291,9 +295,41 @@ def test_markdown_and_html_report_with_inline_diagnostic_plots(tmp_path):
     assert "<table>" in html_doc
     assert "<strong>Polynomial OLS</strong>" in html_doc
     assert "data:image/png;base64," in html_doc
-    assert 'href="save_plot:significance"' in html_doc
-    assert 'href="save_plot:importance"' in html_doc
-    assert 'href="save_plot:parity"' in html_doc
+    for k in ("parity", "t_value", "p_value", "importance"):
+        assert f'href="save_plot:{k}"' in html_doc
+        assert f'href="edit_plot:{k}"' in html_doc
+
+    # Verify custom inline plot overrides (titles, axis labels, and synced term names)
+    t_defaults = get_default_plot_metadata(result, "t_value")
+    assert t_defaults["title"] == "Effect Magnitude (|t-Value|)"
+    assert "x1" in t_defaults["term_labels"]
+
+    all_ovr = {}
+    merge_plot_overrides(
+        all_ovr,
+        "t_value",
+        {
+            "title": "Custom T-Stat Title",
+            "xlabel": "Custom |t|",
+            "ylabel": "Model Terms",
+            "term_labels": {"x1": "Temperature (C)", "x2": "Pressure (bar)"},
+        },
+        sync_terms=True,
+    )
+    assert all_ovr["p_value"]["term_labels"]["x1"] == "Temperature (C)"
+    assert all_ovr["importance"]["term_labels"]["x2"] == "Pressure (bar)"
+
+    custom_figs = build_report_figures(result, plot_overrides=all_ovr)
+    ax_t = custom_figs["t_value"].axes[0]
+    assert ax_t.get_title() == "Custom T-Stat Title"
+    assert ax_t.get_xlabel() == "Custom |t|"
+    assert ax_t.get_ylabel() == "Model Terms"
+    ytick_labels_t = [lbl.get_text() for lbl in ax_t.get_yticklabels()]
+    assert "Temperature (C)" in ytick_labels_t
+
+    ax_p = custom_figs["p_value"].axes[0]
+    ytick_labels_p = [lbl.get_text() for lbl in ax_p.get_yticklabels()]
+    assert "Temperature (C)" in ytick_labels_p
 
 
 def test_rsm_project_save_and_load_survives_deleted_source_csv(tmp_path):
@@ -402,6 +438,41 @@ def test_rsm_app_menubar_and_full_project_roundtrip(tmp_path, monkeypatch):
         app.fill_eval_from_optimal()
         app.evaluate_custom_point()
 
+        # Verify PlotConfigDialog has exactly 1 "Colorbar Label:" label widget (in Tab 2 only)
+        app.open_plot_config()
+        assert app.plot_config_win is not None
+
+        def _count_labels(widget, target_text):
+            cnt = 0
+            try:
+                if str(widget.cget("text")) == target_text:
+                    cnt += 1
+            except Exception:
+                pass
+            for child in widget.winfo_children():
+                cnt += _count_labels(child, target_text)
+            return cnt
+
+        assert _count_labels(app.plot_config_win, "Colorbar Label:") == 1
+        app.plot_config_win.destroy()
+
+        # Verify InlinePlotEditDialog edits t_value plot and syncs term names across bar plots
+        app.open_inline_plot_editor("t_value")
+        dlg = app.inline_plot_edit_win
+        assert dlg is not None
+        dlg.title_var.set("Edited T-Value Plot")
+        dlg.xlabel_var.set("Edited |t| Axis")
+        dlg.term_vars["x1"].set("Factor Alpha")
+        dlg.apply_changes()
+
+        t_fig = app.results_view.report_viewer._figures["t_value"]
+        assert t_fig.axes[0].get_title() == "Edited T-Value Plot"
+        assert t_fig.axes[0].get_xlabel() == "Edited |t| Axis"
+        assert "Factor Alpha" in [t.get_text() for t in t_fig.axes[0].get_yticklabels()]
+
+        p_fig = app.results_view.report_viewer._figures["p_value"]
+        assert "Factor Alpha" in [t.get_text() for t in p_fig.axes[0].get_yticklabels()]
+
         assert app.save_project(filepath=str(rsm_file)) is True, f"Errors: {errors}"
         assert rsm_file.exists()
         assert errors == []
@@ -425,6 +496,9 @@ def test_rsm_app_menubar_and_full_project_roundtrip(tmp_path, monkeypatch):
         assert len(app2.state.eval_history) == 1
         assert "# Surrogate Model Fit Summary" in app2.results_view.report_viewer.get_markdown_text()
         assert "data:image/png;base64," in app2.results_view.report_viewer.get_html_text()
+        restored_t_fig = app2.results_view.report_viewer._figures["t_value"]
+        assert restored_t_fig.axes[0].get_title() == "Edited T-Value Plot"
+        assert "Factor Alpha" in [t.get_text() for t in restored_t_fig.axes[0].get_yticklabels()]
     finally:
         app2.controller.on_closing()
 

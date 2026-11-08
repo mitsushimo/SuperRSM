@@ -171,11 +171,6 @@ class PlotConfigDialog(tk.Toplevel):
         scale_group.grid(row=1, column=0, sticky=tk.NSEW, padx=(0, 6), pady=(0, 4))
         add_adv_field(scale_group, "uniform_cmap", "Uniform Colormap:", True, tk.BooleanVar)
         add_adv_field(scale_group, "show_colorbar", "Show Colorbar:", False, tk.BooleanVar)
-
-        cbar_lbl_frame = ttk.Frame(scale_group, style="Card.TFrame")
-        cbar_lbl_frame.pack(fill=tk.X, pady=3)
-        ttk.Label(cbar_lbl_frame, text="Colorbar Label:", width=24, style="Card.TLabel").pack(side=tk.LEFT)
-        ttk.Entry(cbar_lbl_frame, textvariable=self.colorbar_label_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.adv_settings_vars["colorbar_label"] = self.colorbar_label_var
 
         add_adv_field(scale_group, "grid_color", "Grid Color:", "gray")

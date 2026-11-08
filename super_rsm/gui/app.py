@@ -45,6 +45,7 @@ class RSMApp(RSMMenuMixin, RSMWorkflowMixin, tk.Tk):
         self.state = AppState()
         self.controller = AppController(self, self, self.state)
         self.plot_config_win: Optional[PlotConfigDialog] = None
+        self.inline_plot_edit_win: Optional[Any] = None
 
         self._build_layout()
         self.state.add_status_listener(lambda msg: self.status_var.set(msg))
@@ -148,6 +149,7 @@ class RSMApp(RSMMenuMixin, RSMWorkflowMixin, tk.Tk):
             on_copy_history=self.copy_eval_history,
             on_clear_history=self.clear_eval_history,
             on_history_double_click=self._on_eval_history_double_click,
+            on_edit_plot=self.open_inline_plot_editor,
             fonts=self.fonts,
         )
         self.results_view.pack(fill=tk.BOTH, expand=True)

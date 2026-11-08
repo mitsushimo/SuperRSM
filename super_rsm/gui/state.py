@@ -28,6 +28,7 @@ class AppState:
     opt_params_dict: Dict[str, float] = field(default_factory=dict)
     linear_constraints: List[Dict[str, Any]] = field(default_factory=list)
     eval_history: List[Dict[str, Any]] = field(default_factory=list)
+    diagnostic_plot_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     is_busy: bool = False
     busy_message: str = ""
@@ -63,6 +64,7 @@ class AppState:
         self.fitted_model_signature = None
         self.last_opt_report_text = ""
         self.opt_params_dict.clear()
+        self.diagnostic_plot_overrides.clear()
 
     def get_col_range_str(self, col_name: str) -> str:
         """Format [min, max] range string for a DataFrame column."""

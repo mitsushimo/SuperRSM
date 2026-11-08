@@ -10,7 +10,7 @@ import html
 import re
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from super_rsm.gui.styles.palette import PALETTE
 from super_rsm.gui.styles.theme import get_ui_fonts
@@ -32,8 +32,10 @@ except ImportError:
 
 PLOT_CAPTIONS: Dict[str, str] = {
     "parity": "Diagnostic Plot 1: Actual vs. Predicted Parity",
-    "significance": "Diagnostic Plot 2: Parameter Significance & p-Values",
-    "importance": "Diagnostic Plot 3: Relative Parameter / Factor Importance",
+    "t_value": "Diagnostic Plot 2: Parameter Effect Magnitude (|t-Value|)",
+    "p_value": "Diagnostic Plot 3: Statistical Significance (p-Values)",
+    "importance": "Diagnostic Plot 4: Relative Parameter / Factor Importance",
+    "significance": "Diagnostic Plot: Parameter Significance & p-Values",
 }
 
 REPORT_CSS = f"""
@@ -52,7 +54,8 @@ td {{ border: 1px solid {PALETTE['border_light']}; padding: 5px 8px; }}
 tr:nth-child(even) td {{ background-color: {PALETTE['bg_subtle']}; }}
 .plot-card {{ background-color: #FFFFFF; border: 1px solid {PALETTE['border']}; padding: 10px; margin: 12px 0; text-align: center; }}
 .plot-toolbar {{ margin-top: 6px; padding-top: 6px; border-top: 1px solid {PALETTE['border_light']}; font-size: 12px; color: {PALETTE['text_secondary']}; }}
-.save-btn {{ display: inline-block; background-color: {PALETTE['accent']}; color: #FFFFFF; text-decoration: none; font-weight: bold; padding: 4px 10px; margin-left: 12px; }}
+.edit-btn {{ display: inline-block; background-color: #475569; color: #FFFFFF; text-decoration: none; font-weight: bold; padding: 4px 10px; margin-left: 12px; }}
+.save-btn {{ display: inline-block; background-color: {PALETTE['accent']}; color: #FFFFFF; text-decoration: none; font-weight: bold; padding: 4px 10px; margin-left: 6px; }}
 """
 
 
@@ -76,6 +79,7 @@ def compile_markdown_to_html(markdown_text: str, figures: Optional[Dict[str, Any
             card_html = (
                 f'<div class="plot-card"><div><img src="data:image/png;base64,{b64_str}" alt="{caption}" /></div>'
                 f'<div class="plot-toolbar"><strong>{caption}</strong> '
+                f'<a href="edit_plot:{key}" class="edit-btn">Edit Plot...</a>'
                 f'<a href="save_plot:{key}" class="save-btn">Save Image...</a></div></div>'
             )
             body_html = body_html.replace(f"<!-- PLOT:{key} -->", card_html)
@@ -139,9 +143,15 @@ def _fallback_markdown_to_html(md_text: str) -> str:
 class ReportViewer(tk.Frame):
     """Rich report display widget supporting HTML rendering and styled tk.Text + PhotoImage fallback."""
 
-    def __init__(self, parent: tk.Misc, fonts: Optional[Dict[str, tuple]] = None):
+    def __init__(
+        self,
+        parent: tk.Misc,
+        fonts: Optional[Dict[str, tuple]] = None,
+        on_edit_plot: Optional[Callable[[str], None]] = None,
+    ):
         super().__init__(parent, bg=PALETTE["border"], bd=1, relief=tk.FLAT)
         self.fonts = fonts or get_ui_fonts()
+        self.on_edit_plot = on_edit_plot
         self._markdown_source: str = ""
         self._html_source: str = ""
         self._figures: Dict[str, Any] = {}
@@ -187,6 +197,13 @@ class ReportViewer(tk.Frame):
     def _on_html_link_click(self, url: str) -> None:
         if url.startswith("save_plot:"):
             self.prompt_save_figure(url.split(":", 1)[1])
+        elif url.startswith("edit_plot:"):
+            self.prompt_edit_figure(url.split(":", 1)[1])
+
+    def prompt_edit_figure(self, plot_key: str) -> None:
+        """Invoke inline plot editor callback for the selected diagnostic plot."""
+        if self.on_edit_plot is not None:
+            self.on_edit_plot(plot_key)
 
     def prompt_save_figure(self, plot_key: str) -> Optional[str]:
         """Open file save dialog to export an inline diagnostic plot."""
@@ -301,11 +318,14 @@ class ReportViewer(tk.Frame):
         toolbar.pack(fill=tk.X, pady=(0, 4))
         tk.Label(toolbar, text=PLOT_CAPTIONS.get(key, "Diagnostic Plot"), bg="#FFFFFF", fg=PALETTE["text_secondary"], font=self.fonts["small_bold"]).pack(side=tk.LEFT)
         ttk.Button(toolbar, text="💾 Save Image...", style="Small.TButton", command=lambda k=key: self.prompt_save_figure(k)).pack(side=tk.RIGHT)
+        ttk.Button(toolbar, text="✏ Edit Plot...", style="Small.TButton", command=lambda k=key: self.prompt_edit_figure(k)).pack(side=tk.RIGHT, padx=(0, 6))
         img_lbl = tk.Label(card, image=photo, bg="#FFFFFF", bd=0)
         img_lbl.pack()
         menu = tk.Menu(card, tearoff=0)
+        menu.add_command(label="Edit Plot...", command=lambda k=key: self.prompt_edit_figure(k))
         menu.add_command(label="Save Image As...", command=lambda k=key: self.prompt_save_figure(k))
         img_lbl.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+        img_lbl.bind("<Double-Button-1>", lambda e, k=key: self.prompt_edit_figure(k))
         for w in (card, toolbar, img_lbl):
             w.bind("<MouseWheel>", lambda e: self.text_widget.yview_scroll(int(-1 * (e.delta / 120)), "units"))
         self._embedded_frames.append(card)

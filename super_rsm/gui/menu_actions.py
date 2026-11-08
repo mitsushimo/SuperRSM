@@ -78,6 +78,7 @@ class RSMMenuMixin:
             "eval_history": list(self.state.eval_history),
             "eval_pred_str": self.results_view.eval_pred_var.get(),
             "eval_unc_str": self.results_view.eval_unc_var.get(),
+            "diagnostic_plot_overrides": dict(self.state.diagnostic_plot_overrides),
         }
 
     def save_project(self, filepath: Optional[str] = None, save_as: bool = False) -> bool:
@@ -216,6 +217,7 @@ class RSMMenuMixin:
             self.state.fitted_model_signature = self._get_current_fit_signature()
             self.state.opt_params_dict = {k: float(v) for k, v in st.get("opt_params_dict", {}).items()}
             self.state.last_opt_report_text = st.get("last_opt_report_text", "")
+            self.state.diagnostic_plot_overrides = dict(st.get("diagnostic_plot_overrides", {}))
 
             r2_color = (
                 PALETTE["success"] if result.R_sq >= 0.8 else (PALETTE["warning"] if result.R_sq >= 0.5 else PALETTE["danger"])

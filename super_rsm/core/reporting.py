@@ -281,8 +281,8 @@ def format_full_report_markdown(
     importance = result.get_feature_importance()
     if coeffs_dict:
         lines.extend(format_coefficients_markdown(coeffs_dict, metrics.term_std_errors, metrics.term_t_stats, metrics.term_p_values, importance))
-        if metrics.term_p_values:
-            lines.extend(["<!-- PLOT:significance -->", ""])
+        if metrics.term_t_stats and metrics.term_p_values:
+            lines.extend(["<!-- PLOT:t_value -->", "", "<!-- PLOT:p_value -->", ""])
         if importance:
             lines.extend(["<!-- PLOT:importance -->", ""])
     elif importance:

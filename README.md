@@ -17,7 +17,24 @@
   - **Support Vector Regression (`SVR`)**: Outlier-resistant kernel surrogate (`rbf`, `poly`, `sigmoid`) with standardized input/target scaling, smooth $C^\infty$ response surfaces, main-effect factor sensitivity rankings, and variance/Lack-of-Fit ANOVA.
   - **Genetic Programming (`SymbolicRegressor`)**: Evolutionary symbolic regression via `gplearn` that discovers closed-form algebraic equations, accompanied by main-effect factor sensitivity and variance/Lack-of-Fit ANOVA.
 - **Unified Statistical Diagnostics & Replicate Lack-of-Fit ANOVA (`super_rsm.models.diagnostics`, `super_rsm.core.reporting`)**:
-  - Formatted monospaced coefficient tables (`Estimate`, `Std. Error`, `t-Value`, `p-Value`, `Rel.Imp`, significance codes `***`/`**`/`*`, and `[Pruned]` indicators), side-by-side **Training Set vs. Testing Set** metrics, model-specific hyperparameter diagnostics, and automatic partitioning of `Residual (Error)` into **`↳ Lack of Fit`** ($F$-test & $p$-value) and **`↳ Pure Error`** whenever replicate experimental runs are present.
+  - Formatted statistical tables (Estimate, Std. Error, $t$-Value, $p$-Value, Rel.Imp, significance codes `***`/`**`/`*`, and `[Pruned]` indicators), side-by-side **Training Set vs. Testing Set** metrics, model-specific hyperparameter diagnostics, and automatic partitioning of `Residual (Error)` into **`↳ Lack of Fit`** ($F$-test & $p$-value) and **`↳ Pure Error`** whenever replicate experimental runs are present. Available in both plain text and structured Markdown.
+- **Rich Markdown/HTML Reports with Inline Diagnostic Plots (`super_rsm.gui.components.report_viewer`, `super_rsm.visualization.diagnostic_plots`)**:
+  - The model report view renders rich typography (headings, bold metrics, bullet lists, code callouts, and clean tables) via `markdown` and `tkinterweb.HtmlFrame` (with an automatic styled `tk.Text` + `tk.PhotoImage` fallback).
+  - Automatically embeds publication-grade diagnostic plots inline within the report:
+    - **Actual vs. Predicted Parity Plot**: Scatter plot comparing Training and Test partitions against the $1:1$ reference line.
+    - **Parameter Effect Magnitude ($|t\text{-Value}|$)**: Standalone horizontal bar chart displaying effect magnitudes for all active terms.
+    - **Statistical Significance ($p\text{-Values}$)**: Standalone horizontal bar chart displaying $-\log_{10}(p\text{-value})$ with $p=0.05$ and $p=0.01$ threshold references.
+    - **Relative Importance / Factor Sensitivity Chart**: Horizontal bar plot ranking variance share / standardized weights across factors.
+  - **Inline Plot Customization (`InlinePlotEditDialog`)**:
+    - Every inline diagnostic figure features an **"✏ Edit Plot..."** button directly in its toolbar (also accessible via right-click context menu and image double-click).
+    - Allows users to customize plot titles, axis labels, parameter/term display names (with an option to sync term renaming across all diagnostic bar charts), and parity series legend labels while maintaining the exact visual styling and layout.
+  - Every inline diagnostic figure includes an interactive **"💾 Save Image..."** button supporting high-resolution export (`.png` at 300 DPI, `.svg`, `.pdf`).
+- **Interactive Multi-Dimensional Contour Slicing (`super_rsm.gui.dialogs.plot_config_dialog`, `super_rsm.visualization`)**:
+  - Multi-tab plot configuration modal window (`PlotConfigDialog`) for assigning variables to axes ($X$, $Y$), subplot grids ($P$, $Q$), or fixed slices.
+  - Unified label configuration in Tab 2 (**"Titles & Axis Labels"**) for plot titles, axis labels, row/column prefixes, and a single authoritative **Colorbar Label** entry.
+- **Self-Contained Project Persistence (`.rsm`) & Native Menu Bar (`super_rsm.core.persistence`, `super_rsm.gui.menu_actions`)**:
+  - Top-of-window native **File** menu (`Save` [Ctrl+S], `Save as` [Ctrl+Shift+S], `Load` [Ctrl+O]) providing seamless session persistence.
+  - The portable `.rsm` archive embeds the active dataset directly inside the project container along with train/test partitions, fitted surrogate model state, optimization bounds, linear constraints, custom point evaluation history, and customized diagnostic plot overrides. Moving or deleting original CSV/Excel files will never break saved progress.
 - **Replicate-Aware Train/Test Splitting (`split_by_groups`)**:
   - Prevents data leakage on datasets containing replicate measurements at identical input parameter combinations by selecting a percentage of **unique input combinations** as the testing set and keeping all replicates of each condition together (enabled by default in the GUI via the **"Split by Unique Inputs"** checkbox).
 - **Zero-Touch Model Plugin Architecture**:
@@ -112,9 +129,9 @@ SuperRSM/
 └── super_rsm/
     ├── common/                       # Layer 0: Types, Enums, Exceptions, HyperparameterSpec, ModelMetadata
     ├── models/                       # Layer 1: BaseRSMModel, ModelRegistry, diagnostics, OLS, RidgeCV, BayesianRidge, ElasticNetCV, GP, SVR, Symbolic
-    ├── core/                         # Layer 2: Headless RSMDataset (replicate-aware), RSMResult, reporting, OptimizationEngine, pipeline
-    ├── visualization/                # Layer 3: PlotSettings, vectorized GridSampler, MultiContourEngine, VisualizationService
-    └── gui/                          # Layer 4: MVP Desktop UI (RSMApp, AppController, AppState, views/, dialogs/, components/, styles/)
+    ├── core/                         # Layer 2: Headless RSMDataset (replicate-aware), RSMResult, persistence (.rsm), reporting (text/MD), OptimizationEngine, pipeline
+    ├── visualization/                # Layer 3: PlotSettings, vectorized GridSampler, MultiContourEngine, VisualizationService, diagnostic_plots
+    └── gui/                          # Layer 4: MVP Desktop UI (RSMApp, AppController, AppState, menu_actions, views/, dialogs/, components/, styles/)
 ```
 
 ---
@@ -164,6 +181,18 @@ print(result.summary())
 constraint = ConstraintSpec(coeffs={"x1": 1.0, "x2": 1.0}, operator=ConstraintOperator.LE, bound=6.0)
 opt = result.optimize(bounds={"x1": (0.0, 10.0), "x2": (0.0, 10.0)}, constraints=[constraint], maximize=False)
 print(f"Optimal parameters: {opt.to_dict(['x1', 'x2'])}, Minimum y = {opt.fun:.4f}")
+
+# Save and load full project sessions (.rsm) headlessly
+from super_rsm.core.persistence import save_rsm_project, load_rsm_project
+
+save_rsm_project(
+    "experiment.rsm",
+    df=df,
+    state_dict={"input_cols": ["x1", "x2"], "output_col": "y", "method": "Polynomial OLS"},
+    result=result,
+)
+restored = load_rsm_project("experiment.rsm")
+print(f"Restored dataset shape: {restored['df'].shape}, Model: {restored['result'].method}")
 ```
 
 ---

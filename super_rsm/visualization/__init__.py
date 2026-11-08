@@ -15,10 +15,13 @@ from super_rsm.visualization.contour import (
 from super_rsm.visualization.diagnostic_plots import (
     build_report_figures,
     create_importance_plot,
+    create_p_value_plot,
     create_parity_plot,
     create_significance_plot,
+    create_t_value_plot,
     figure_to_base64_png,
     figure_to_png_bytes,
+    get_default_plot_metadata,
     save_figure,
 )
 from super_rsm.visualization.service import VisualizationService
@@ -34,9 +37,12 @@ __all__ = [
     "default_plot_settings",
     "build_report_figures",
     "create_importance_plot",
+    "create_p_value_plot",
     "create_parity_plot",
     "create_significance_plot",
+    "create_t_value_plot",
     "figure_to_base64_png",
     "figure_to_png_bytes",
+    "get_default_plot_metadata",
     "save_figure",
 ]

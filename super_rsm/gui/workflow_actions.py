@@ -10,12 +10,14 @@ from tkinter import messagebox
 from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
+from super_rsm.gui.components.report_viewer import PLOT_CAPTIONS
 from super_rsm.gui.components.treeview_helper import clear_treeview
 from super_rsm.gui.controller import AppController
 from super_rsm.gui.dialogs.constraint_dialog import LinearConstraintDialog
+from super_rsm.gui.dialogs.inline_plot_edit_dialog import InlinePlotEditDialog, merge_plot_overrides
 from super_rsm.gui.dialogs.plot_config_dialog import PlotConfigDialog
 from super_rsm.gui.styles.palette import PALETTE
-from super_rsm.visualization.diagnostic_plots import build_report_figures
+from super_rsm.visualization.diagnostic_plots import build_report_figures, get_default_plot_metadata
 
 
 class RSMWorkflowMixin:
@@ -34,15 +36,12 @@ class RSMWorkflowMixin:
 
     def clear_bounds_entries(self) -> None:
         for min_var, max_var in self.bound_entries.values():
-            min_var.set("")
-            max_var.set("")
+            min_var.set(""); max_var.set("")
         self.state.set_status("Cleared optimization bounds.")
 
     def _render_full_report(self) -> None:
-        md_text = AppController.format_markdown_report(
-            self.state.result, self.state.current_input_cols, self.state.current_output_col, self.state.last_opt_report_text
-        )
-        figures = build_report_figures(self.state.result)
+        md_text = AppController.format_markdown_report(self.state.result, self.state.current_input_cols, self.state.current_output_col, self.state.last_opt_report_text)
+        figures = build_report_figures(self.state.result, plot_overrides=self.state.diagnostic_plot_overrides)
         self.results_view.set_report_text(md_text, figures=figures)
 
     def copy_results_to_clipboard(self) -> None:
@@ -180,6 +179,7 @@ class RSMWorkflowMixin:
             self.state.fitted_model_signature = self._get_current_fit_signature()
             self.state.last_opt_report_text = ""
             self.state.opt_params_dict.clear()
+            self.state.diagnostic_plot_overrides.clear()
 
             r2_color = PALETTE["success"] if result.R_sq >= 0.8 else (PALETTE["warning"] if result.R_sq >= 0.5 else PALETTE["danger"])
             self.kpi_r2.set_value(f"{result.R_sq:.4f}", f"Method: {result.method}", r2_color)
@@ -194,13 +194,10 @@ class RSMWorkflowMixin:
             self.results_view.eval_pred_var.set(f"Predicted {output_col}:  —")
             self.results_view.eval_unc_var.set(
                 f"Ready — {result.method} supports predictive uncertainty (±1σ & 95% CI)."
-                if result.supports_uncertainty
-                else "Ready — Enter parameter values above and click 'Evaluate Output'."
+                if result.supports_uncertainty else "Ready — Enter parameter values above and click 'Evaluate Output'."
             )
             self._render_full_report()
-            self.state.set_status(
-                f"Model fit complete — {result.method} (R² = {result.R_sq:.4f}, RMSE = {result.RMSE:.5g}). Ready for optimization, evaluation, or plotting."
-            )
+            self.state.set_status(f"Model fit complete — {result.method} (R² = {result.R_sq:.4f}, RMSE = {result.RMSE:.5g}). Ready for optimization, evaluation, or plotting.")
 
         def _on_fit_err(exc: Exception) -> None:
             self.state.set_status("Model fitting failed — check error dialog.")
@@ -238,17 +235,12 @@ class RSMWorkflowMixin:
                 messagebox.showerror("Error", f"Minimum bound cannot exceed maximum bound for '{col}'.", parent=self)
                 return
             bounds.append((min_v, max_v))
-            bounds_display[col] = (
-                "Unconstrained"
-                if (min_v is None and max_v is None)
-                else f"[{f'{min_v:g}' if min_v is not None else '-∞'}, {f'{max_v:g}' if max_v is not None else '+∞'}]"
-            )
+            bounds_display[col] = "Unconstrained" if (min_v is None and max_v is None) else f"[{f'{min_v:g}' if min_v is not None else '-∞'}, {f'{max_v:g}' if max_v is not None else '+∞'}]"
 
         for c in self.state.linear_constraints:
             for k, v in c.get("coeffs", {}).items():
                 if abs(v) > 1e-12 and k not in input_cols:
-                    messagebox.showerror("Error", f"Constraint '{c['expression_str']}' references unselected input '{k}'.", parent=self)
-                    return
+                    messagebox.showerror("Error", f"Constraint '{c['expression_str']}' references unselected input '{k}'.", parent=self); return
         opt_bounds = None if all(b == (None, None) for b in bounds) else bounds
         constraint_specs = AppController.build_constraint_specs(self.state.linear_constraints)
         sync_flag = (not self.async_tasks) if synchronous is None else synchronous
@@ -261,14 +253,10 @@ class RSMWorkflowMixin:
 
             clear_treeview(self.opt_params_tree)
             for col, val in zip(input_cols, opt_params):
-                self.opt_params_tree.insert(
-                    "", tk.END, values=(col, f"{val:.6f}", bounds_display.get(col, "Unconstrained"), self.state.get_col_range_str(col))
-                )
+                self.opt_params_tree.insert("", tk.END, values=(col, f"{val:.6f}", bounds_display.get(col, "Unconstrained"), self.state.get_col_range_str(col)))
 
             clear_treeview(self.constraint_eval_tree)
-            n_violated, rows, c_lines = AppController.evaluate_constraints_at_point(
-                self.state.linear_constraints, input_cols, opt_params
-            )
+            n_violated, rows, c_lines = AppController.evaluate_constraints_at_point(self.state.linear_constraints, input_cols, opt_params)
             for r_id, expr, lhs, st_str, tag in rows:
                 self.constraint_eval_tree.insert("", tk.END, values=(r_id, expr, f"{lhs:.6f}", st_str), tags=(tag,))
 
@@ -283,25 +271,18 @@ class RSMWorkflowMixin:
                 f"- **Optimization Goal**: **{goal}** `{output_col}`\n",
                 "- **Optimizer Status**: **Converged successfully**\n" if opt_res.success else f"- **Optimizer Status**: **Warning** — {opt_res.message}\n",
                 f"- **Optimized ({'Maximum' if is_maximize else 'Minimum'}) Output Value [`{output_col}`]**: **{opt_val:.6f}**\n\n",
-                "| Parameter | Optimal Value | Applied Bounds | Dataset [Min, Max] |\n",
-                "| :--- | ---: | :---: | :---: |\n",
+                "| Parameter | Optimal Value | Applied Bounds | Dataset [Min, Max] |\n| :--- | ---: | :---: | :---: |\n",
                 *[f"| **{col}** | {val:.6f} | {bounds_display.get(col, 'Unconstrained')} | {self.state.get_col_range_str(col)} |\n" for col, val in zip(input_cols, opt_params)],
             ]
             if rows:
-                opt_lines.extend([
-                    "\n### Linear Constraint Verification\n\n",
-                    *[f"- **[#{r_id}]** `{expr}` — Evaluated LHS = `{lhs:.6f}` (**{st_str}**)\n" for r_id, expr, lhs, st_str, _ in rows],
-                ])
+                opt_lines.extend(["\n### Linear Constraint Verification\n\n", *[f"- **[#{r_id}]** `{expr}` — Evaluated LHS = `{lhs:.6f}` (**{st_str}**)\n" for r_id, expr, lhs, st_str, _ in rows]])
             self.state.last_opt_report_text = "".join(opt_lines)
             self._render_full_report()
             self.state.set_status(f"Optimization complete — {self.state.result.method} ({'Max' if is_maximize else 'Min'} {output_col} = {opt_val:.6g}).")
 
         self.controller._run_async(
-            self.state.result.optimize,
-            bounds=opt_bounds, constraints=constraint_specs, maximize=is_maximize,
-            on_success=_on_opt_done,
-            busy_message=f"Running constrained {'maximization' if is_maximize else 'minimization'}...",
-            synchronous=sync_flag,
+            self.state.result.optimize, bounds=opt_bounds, constraints=constraint_specs, maximize=is_maximize,
+            on_success=_on_opt_done, busy_message=f"Running constrained {'maximization' if is_maximize else 'minimization'}...", synchronous=sync_flag,
         )
 
     def evaluate_custom_point(self) -> None:
@@ -349,4 +330,21 @@ class RSMWorkflowMixin:
         self.plot_config_win = PlotConfigDialog(
             self, self.state.current_input_cols, self.state.current_output_col,
             self.state.result, self.state.df, self.state.opt_params_dict,
+        )
+
+    def open_inline_plot_editor(self, plot_key: str) -> None:
+        if not self.state.result:
+            return
+        if getattr(self, "inline_plot_edit_win", None) is not None and self.inline_plot_edit_win.winfo_exists():
+            self.inline_plot_edit_win.destroy()
+        defaults = get_default_plot_metadata(self.state.result, plot_key)
+        curr_ovr = self.state.diagnostic_plot_overrides.get(plot_key, {})
+
+        def _on_apply(new_ovr: Dict[str, Any], sync_terms: bool) -> None:
+            merge_plot_overrides(self.state.diagnostic_plot_overrides, plot_key, new_ovr, sync_terms=sync_terms)
+            self._render_full_report()
+            self.state.set_status(f"Updated inline plot '{PLOT_CAPTIONS.get(plot_key, plot_key)}'.")
+
+        self.inline_plot_edit_win = InlinePlotEditDialog(
+            self, plot_key, PLOT_CAPTIONS.get(plot_key, plot_key), defaults, curr_ovr, on_apply=_on_apply
         )
