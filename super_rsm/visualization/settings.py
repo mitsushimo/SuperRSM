@@ -41,6 +41,16 @@ class PlotSettings:
     fig_height: float = 6.0
     dpi: int = 100
 
+    auto_layout: bool = True
+    auto_figsize: bool = True
+    outer_labels_only: bool = True
+    subplot_width: float = 3.2
+    subplot_height: float = 2.8
+    layout_h_pad: float = 0.08
+    layout_w_pad: float = 0.08
+    layout_hspace: float = 0.05
+    layout_wspace: float = 0.05
+
     figure_facecolor: str = "white"
     axes_facecolor: str = "white"
     text_color: str = ".15"

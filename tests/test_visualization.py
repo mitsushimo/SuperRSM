@@ -221,3 +221,73 @@ def test_backward_compatible_shims():
     fig, _ = plot_a_function(lambda X, Y, p, q: X + Y, [0, 1], [0, 1], [0], [0], plot_settings={"show_plot": False})
     assert isinstance(fig, matplotlib.figure.Figure)
     plt.close(fig)
+
+
+def test_compute_figsize_scales_for_large_grids():
+    ps = PlotSettings(fig_width=8.0, fig_height=6.0, subplot_width=3.2, subplot_height=2.8)
+    assert MultiContourEngine.compute_figsize(1, 1, ps) == (8.0, 6.0)
+
+    w4, h4 = MultiContourEngine.compute_figsize(4, 4, ps, has_title=True, has_colorbar=False)
+    assert w4 > 8.0 and h4 > 6.0
+
+    w4_cb, h4_cb = MultiContourEngine.compute_figsize(4, 4, ps, has_title=True, has_colorbar=True)
+    assert w4_cb > w4 and h4_cb == h4
+
+    ps_fixed = PlotSettings(fig_width=8.0, fig_height=6.0, auto_figsize=False)
+    assert MultiContourEngine.compute_figsize(5, 5, ps_fixed, has_title=True, has_colorbar=True) == (8.0, 6.0)
+
+
+@pytest.mark.parametrize("m,n", [(4, 4), (5, 4), (4, 1), (1, 4)])
+@pytest.mark.parametrize("outer_only", [True, False])
+@pytest.mark.parametrize("show_colorbar", [False, True])
+def test_large_multi_contour_grid_no_label_title_overlap(m, n, outer_only, show_colorbar):
+    X_m, Y_m = np.meshgrid(np.linspace(0, 10, 12), np.linspace(0, 10, 12))
+    Z_array = [[np.sin(X_m + i) + np.cos(Y_m + j) for j in range(n)] for i in range(m)]
+    labels = [[f"p={i}, q={j}" for j in range(n)] for i in range(m)]
+    grid_res = SurfaceGridResult(X_mesh=X_m, Y_mesh=Y_m, Z_array=Z_array)
+
+    ps = PlotSettings(
+        show_plot=False,
+        show_colorbar=show_colorbar,
+        colorbar_label="Response" if show_colorbar else "",
+        auto_layout=True,
+        auto_figsize=True,
+        outer_labels_only=outer_only,
+    )
+    fig, axes = MultiContourEngine.render(
+        grid_result=grid_res,
+        settings=ps,
+        title="Multi-Contour Overlap Check",
+        xlabel="Temperature (C)",
+        ylabel="Pressure (kPa)",
+        label_array=labels,
+    )
+    try:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+
+        # Verify label placement respects outer_labels_only
+        for i in range(m):
+            for j in range(n):
+                expected_x = "Temperature (C)" if (not outer_only or i == m - 1) else ""
+                expected_y = "Pressure (kPa)" if (not outer_only or j == 0) else ""
+                assert axes[i, j].get_xlabel() == expected_x
+                assert axes[i, j].get_ylabel() == expected_y
+
+        # Verify zero overlap between row i xlabel/axes and row i+1 title
+        for i in range(m - 1):
+            for j in range(n):
+                ax_top, ax_bot = axes[i, j], axes[i + 1, j]
+                title_bbox = ax_bot.title.get_window_extent(renderer=renderer)
+                assert not ax_top.get_window_extent(renderer=renderer).overlaps(title_bbox)
+                if ax_top.xaxis.label.get_text():
+                    xlabel_bbox = ax_top.xaxis.label.get_window_extent(renderer=renderer)
+                    assert not xlabel_bbox.overlaps(title_bbox)
+
+        # Verify zero overlap between suptitle and top-row titles
+        if fig._suptitle is not None and fig._suptitle.get_text():
+            sup_bbox = fig._suptitle.get_window_extent(renderer=renderer)
+            for j in range(n):
+                assert not sup_bbox.overlaps(axes[0, j].title.get_window_extent(renderer=renderer))
+    finally:
+        plt.close(fig)

@@ -87,10 +87,27 @@ class MultiContourEngine:
         y_min, y_max = float(np.min(Y)), float(np.max(Y))
 
         fill_levels, line_levels, z_min, z_max = cls._calc_levels(Z_data, ps)
+        figsize = cls.compute_figsize(
+            m, n, ps, has_title=bool(title), has_colorbar=bool(ps.show_colorbar),
+        )
         rc_params = cls.build_rc_params(ps)
+        rc_params["figure.figsize"] = figsize
+
+        subplot_kwargs: Dict[str, Any] = {"sharex": True, "sharey": True, "squeeze": False}
+        if ps.auto_layout:
+            subplot_kwargs["layout"] = "constrained"
 
         with plt.rc_context(rc_params):
-            fig, axes = plt.subplots(m, n, sharex=True, sharey=True, squeeze=False)
+            fig, axes = plt.subplots(m, n, **subplot_kwargs)
+            if ps.auto_layout and hasattr(fig, "get_layout_engine"):
+                engine = fig.get_layout_engine()
+                if engine is not None and hasattr(engine, "set"):
+                    engine.set(
+                        h_pad=ps.layout_h_pad,
+                        w_pad=ps.layout_w_pad,
+                        hspace=ps.layout_hspace,
+                        wspace=ps.layout_wspace,
+                    )
             last_cf = None
 
             for i in range(m):
@@ -119,8 +136,10 @@ class MultiContourEngine:
 
                     if label_array is not None and i < len(label_array) and j < len(label_array[i]):
                         ax.set_title(str(label_array[i][j]))
-                    ax.set_xlabel(xlabel)
-                    ax.set_ylabel(ylabel)
+                    if not ps.outer_labels_only or i == m - 1:
+                        ax.set_xlabel(xlabel)
+                    if not ps.outer_labels_only or j == 0:
+                        ax.set_ylabel(ylabel)
                     if ps.show_grid:
                         ax.grid(True, color=ps.grid_color, linestyle=ps.grid_linestyle, alpha=getattr(ps, "grid_alpha", 0.6))
 
@@ -137,6 +156,29 @@ class MultiContourEngine:
                 plt.show()
 
         return fig, axes
+
+    @classmethod
+    def compute_figsize(
+        cls,
+        m: int,
+        n: int,
+        settings: PlotSettings,
+        has_title: bool = True,
+        has_colorbar: bool = False,
+    ) -> Tuple[float, float]:
+        """Compute responsive figure dimensions (width, height) in inches for an m x n subplot grid."""
+        base_w, base_h = float(settings.fig_width), float(settings.fig_height)
+        if not settings.auto_figsize or (m <= 1 and n <= 1):
+            return (base_w, base_h)
+
+        cbar_pad = 1.0 if has_colorbar else 0.4
+        title_pad = 0.6 if has_title else 0.3
+        extra_h = 0.35 if (not settings.outer_labels_only and m > 1) else 0.0
+        extra_w = 0.35 if (not settings.outer_labels_only and n > 1) else 0.0
+
+        target_w = n * (float(settings.subplot_width) + extra_w) + cbar_pad
+        target_h = m * (float(settings.subplot_height) + extra_h) + title_pad
+        return (max(base_w, target_w), max(base_h, target_h))
 
     @classmethod
     def build_rc_params(cls, settings: PlotSettings) -> Dict[str, Any]:

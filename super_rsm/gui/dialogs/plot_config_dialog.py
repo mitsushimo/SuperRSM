@@ -167,7 +167,7 @@ class PlotConfigDialog(tk.Toplevel):
         add_adv_field(contour_group, "inline_fontsize", "Inline Fontsize:", 9, tk.IntVar)
         add_adv_field(contour_group, "inline_format", "Inline Format:", "%1.1f")
 
-        scale_group = ttk.LabelFrame(adv_frame, text="Colorbar, Grid & Uncertainty", padding="10")
+        scale_group = ttk.LabelFrame(adv_frame, text="Colorbar, Grid, Layout & Uncertainty", padding="10")
         scale_group.grid(row=1, column=0, sticky=tk.NSEW, padx=(0, 6), pady=(0, 4))
         add_adv_field(scale_group, "uniform_cmap", "Uniform Colormap:", True, tk.BooleanVar)
         add_adv_field(scale_group, "show_colorbar", "Show Colorbar:", False, tk.BooleanVar)
@@ -176,6 +176,9 @@ class PlotConfigDialog(tk.Toplevel):
         add_adv_field(scale_group, "grid_color", "Grid Color:", "gray")
         add_adv_field(scale_group, "grid_linestyle", "Grid Linestyle:", "--", options=COMMON_LINESTYLES, readonly_options=False)
         add_adv_field(scale_group, "plot_uncertainty", "Plot Uncertainty:", False, tk.BooleanVar)
+        add_adv_field(scale_group, "auto_layout", "Auto-Adjust Layout:", True, tk.BooleanVar)
+        add_adv_field(scale_group, "auto_figsize", "Auto-Scale Figure Size:", True, tk.BooleanVar)
+        add_adv_field(scale_group, "outer_labels_only", "Outer Axis Labels Only:", True, tk.BooleanVar)
 
         scatter_group = ttk.LabelFrame(adv_frame, text="Measurement Data Scatter Overlay", padding="10")
         scatter_group.grid(row=0, column=1, rowspan=2, sticky=tk.NSEW, padx=(6, 0), pady=(0, 4))
