@@ -109,8 +109,10 @@ class PlotConfigDialog(tk.Toplevel):
         self.colorbar_label_var = add_label_field("Colorbar Label:", self.output_col)
         self.p_label_prefix_var = add_label_field("Row-Axis (P) Label Prefix:", "")
         self.p_label_suffix_var = add_label_field("Row-Axis (P) Label Suffix:", "")
+        self.p_decimals_var = add_label_field("Row-Axis (P) Decimal Places:", "2")
         self.q_label_prefix_var = add_label_field("Column-Axis (Q) Label Prefix:", "")
         self.q_label_suffix_var = add_label_field("Column-Axis (Q) Label Suffix:", "")
+        self.q_decimals_var = add_label_field("Column-Axis (Q) Decimal Places:", "2")
 
     def _build_advanced_tab(self, notebook: ttk.Notebook) -> None:
         adv_frame = ttk.Frame(notebook, style="Card.TFrame", padding="12")
@@ -271,12 +273,12 @@ class PlotConfigDialog(tk.Toplevel):
                     p_count += 1
                     vals = [float(v.strip()) for v in vars_dict["values"].get().split(",") if v.strip()]
                     config["p"] = (idx, vals)
-                    label_arrays_p = format_slice_labels(col, vals, self.p_label_prefix_var.get(), self.p_label_suffix_var.get(), norm_cfg, norm_cfg.p_axis, self.df, self.opt_params_dict, "Row-Axis")
+                    label_arrays_p = format_slice_labels(col, vals, self.p_label_prefix_var.get(), self.p_label_suffix_var.get(), norm_cfg, norm_cfg.p_axis, self.df, self.opt_params_dict, "Row-Axis", int(self.p_decimals_var.get().strip() or "2"))
                 elif role == "Column-Axis (Q)":
                     q_count += 1
                     vals = [float(v.strip()) for v in vars_dict["values"].get().split(",") if v.strip()]
                     config["q"] = (idx, vals)
-                    label_arrays_q = format_slice_labels(col, vals, self.q_label_prefix_var.get(), self.q_label_suffix_var.get(), norm_cfg, norm_cfg.q_axis, self.df, self.opt_params_dict, "Column-Axis")
+                    label_arrays_q = format_slice_labels(col, vals, self.q_label_prefix_var.get(), self.q_label_suffix_var.get(), norm_cfg, norm_cfg.q_axis, self.df, self.opt_params_dict, "Column-Axis", int(self.q_decimals_var.get().strip() or "2"))
                 elif role == "Fixed":
                     config["fixed"].append((idx, float(vars_dict["value"].get())))
 
@@ -318,7 +320,7 @@ class PlotConfigDialog(tk.Toplevel):
         if not filepath: return
         settings = {
             "roles": {col: {"role": cfg["role_var"].get(), "vars": {k: v.get() for k, v in cfg["vars"].items()}} for col, cfg in self.plot_param_configs.items()},
-            "labels": {"plot_title": self.plot_title_var.get(), "x_label": self.x_label_var.get(), "y_label": self.y_label_var.get(), "colorbar_label": self.colorbar_label_var.get(), "p_label_prefix": self.p_label_prefix_var.get(), "p_label_suffix": self.p_label_suffix_var.get(), "q_label_prefix": self.q_label_prefix_var.get(), "q_label_suffix": self.q_label_suffix_var.get()},
+            "labels": {"plot_title": self.plot_title_var.get(), "x_label": self.x_label_var.get(), "y_label": self.y_label_var.get(), "colorbar_label": self.colorbar_label_var.get(), "p_label_prefix": self.p_label_prefix_var.get(), "p_label_suffix": self.p_label_suffix_var.get(), "p_decimals": self.p_decimals_var.get(), "q_label_prefix": self.q_label_prefix_var.get(), "q_label_suffix": self.q_label_suffix_var.get(), "q_decimals": self.q_decimals_var.get()},
             "advanced": {k: v.get() for k, v in self.adv_settings_vars.items() if k != "colorbar_label"},
             "normalization": self.get_normalization_config(strict=False).to_dict(),
         }
@@ -333,7 +335,7 @@ class PlotConfigDialog(tk.Toplevel):
         try:
             with open(filepath, "r", encoding="utf-8") as f: settings = json.load(f)
             labels = settings.get("labels", {})
-            for key, var in [("plot_title", self.plot_title_var), ("x_label", self.x_label_var), ("y_label", self.y_label_var), ("colorbar_label", self.colorbar_label_var), ("p_label_prefix", self.p_label_prefix_var), ("p_label_suffix", self.p_label_suffix_var), ("q_label_prefix", self.q_label_prefix_var), ("q_label_suffix", self.q_label_suffix_var)]:
+            for key, var in [("plot_title", self.plot_title_var), ("x_label", self.x_label_var), ("y_label", self.y_label_var), ("colorbar_label", self.colorbar_label_var), ("p_label_prefix", self.p_label_prefix_var), ("p_label_suffix", self.p_label_suffix_var), ("p_decimals", self.p_decimals_var), ("q_label_prefix", self.q_label_prefix_var), ("q_label_suffix", self.q_label_suffix_var), ("q_decimals", self.q_decimals_var)]:
                 if key in labels: var.set(labels[key])
             for key, val in settings.get("advanced", {}).items():
                 if key in self.adv_settings_vars:

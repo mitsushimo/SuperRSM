@@ -585,11 +585,19 @@ def test_plot_normalization_dialog_report_note_and_persistence(tmp_path):
             assert -1.3 <= parity_fig.axes[0].get_xlim()[0] <= -0.9
             assert 0.9 <= parity_fig.axes[0].get_xlim()[1] <= 1.3
 
-            # Trigger Generate Plot and verify raw P values in config vs normalized P labels
+            # Trigger Generate Plot and verify raw P values in config vs normalized P labels (default 2 decimals)
             dlg.generate_plot()
             assert captured["config"]["p"][1] == [20.0, 40.0, 60.0]
-            assert captured["labels"] == [["Flow=0"], ["Flow=0.5"], ["Flow=1"]]
+            assert captured["labels"] == [["Flow=0.00"], ["Flow=0.50"], ["Flow=1.00"]]
             assert captured["plot_settings"]["normalization"]["x_axis"]["enabled"] is True
+
+            # Verify adjustable decimal places for P labels
+            dlg.p_decimals_var.set("3")
+            dlg.generate_plot()
+            assert captured["labels"] == [["Flow=0.000"], ["Flow=0.500"], ["Flow=1.000"]]
+            dlg.p_decimals_var.set("1")
+            dlg.generate_plot()
+            assert captured["labels"] == [["Flow=0.0"], ["Flow=0.5"], ["Flow=1.0"]]
         finally:
             dlg.destroy()
 

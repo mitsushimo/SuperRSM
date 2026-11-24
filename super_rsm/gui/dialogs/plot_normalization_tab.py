@@ -318,10 +318,13 @@ def format_slice_labels(
     df: Any = None,
     opt_params_dict: Optional[Dict[str, float]] = None,
     axis_label: str = "Slice-Axis",
+    decimals: int = 2,
 ) -> list:
-    """Format P or Q subplot slice labels, normalizing display values when enabled."""
+    """Format P or Q subplot slice labels with fixed decimal places, normalizing display values when enabled."""
+    dec = max(0, int(decimals))
     pre = prefix.strip() or f"{col}="
     suf = suffix.strip()
+    disp_vals = [float(v) for v in vals]
     if norm_cfg.apply_to_contour and axis_spec.enabled:
         data_vals = None
         if df is not None and col in df.columns:
@@ -334,6 +337,6 @@ def format_slice_labels(
             opt_value=(opt_params_dict or {}).get(col), axis_name=f"{axis_label} ({col})",
         )
         if tf is not None:
-            return [f"{pre}{float(tf.transform(v)):.4g}{suf}" for v in vals]
-    return [f"{pre}{v}{suf}" for v in vals]
+            disp_vals = [float(tf.transform(v)) for v in vals]
+    return [f"{pre}{v:.{dec}f}{suf}" for v in disp_vals]
 
