@@ -10,6 +10,7 @@ from matplotlib.figure import Figure
 import numpy as np
 
 from super_rsm.models.base import SurfaceGridResult
+from super_rsm.visualization.normalization import ResolvedAxisTransform
 from super_rsm.visualization.settings import PlotSettings
 
 
@@ -75,14 +76,46 @@ class MultiContourEngine:
         save_path: Optional[str] = None,
         render_uncertainty: bool = False,
         uncertainty_overlay: bool = False,
+        axis_transforms: Optional[Dict[str, Optional[ResolvedAxisTransform]]] = None,
     ) -> Tuple[Figure, np.ndarray]:
         """Generate multi-slice contour figure within scoped plt.rc_context."""
         ps = settings if isinstance(settings, PlotSettings) else (
             PlotSettings.from_dict(settings) if isinstance(settings, dict) else PlotSettings()
         )
-        Z_data = grid_result.U_array if (render_uncertainty and grid_result.U_array) else grid_result.Z_array
+        tfs = axis_transforms or {}
+        x_tf: Optional[ResolvedAxisTransform] = tfs.get("x")
+        y_tf: Optional[ResolvedAxisTransform] = tfs.get("y")
+        z_tf: Optional[ResolvedAxisTransform] = tfs.get("z")
+
+        raw_Z = grid_result.U_array if (render_uncertainty and grid_result.U_array) else grid_result.Z_array
+        if z_tf is not None:
+            ps = PlotSettings.from_dict(ps.to_dict())
+            if render_uncertainty and grid_result.U_array:
+                Z_data = [[z_tf.transform_uncertainty(arr) for arr in row] for row in raw_Z]
+                if ps.vmin is not None:
+                    ps.vmin = z_tf.transform_uncertainty(ps.vmin)
+                if ps.vmax is not None:
+                    ps.vmax = z_tf.transform_uncertainty(ps.vmax)
+            else:
+                Z_data = [[z_tf.transform(arr) for arr in row] for row in raw_Z]
+                if ps.vmin is not None:
+                    ps.vmin = z_tf.transform(ps.vmin)
+                if ps.vmax is not None:
+                    ps.vmax = z_tf.transform(ps.vmax)
+            if ps.vmin is not None and ps.vmax is not None and ps.vmin > ps.vmax:
+                ps.vmin, ps.vmax = ps.vmax, ps.vmin
+            if ps.scatter_vmin is not None:
+                ps.scatter_vmin = z_tf.transform(ps.scatter_vmin)
+            if ps.scatter_vmax is not None:
+                ps.scatter_vmax = z_tf.transform(ps.scatter_vmax)
+            if ps.scatter_vmin is not None and ps.scatter_vmax is not None and ps.scatter_vmin > ps.scatter_vmax:
+                ps.scatter_vmin, ps.scatter_vmax = ps.scatter_vmax, ps.scatter_vmin
+        else:
+            Z_data = raw_Z
+
         m, n = len(Z_data), len(Z_data[0])
-        X, Y = grid_result.X_mesh, grid_result.Y_mesh
+        X = x_tf.transform(grid_result.X_mesh) if x_tf is not None else grid_result.X_mesh
+        Y = y_tf.transform(grid_result.Y_mesh) if y_tf is not None else grid_result.Y_mesh
         x_min, x_max = float(np.min(X)), float(np.max(X))
         y_min, y_max = float(np.min(Y)), float(np.max(Y))
 
@@ -124,12 +157,16 @@ class MultiContourEngine:
                     ax.clabel(lines, inline=True, fontsize=ps.inline_fontsize, fmt=ps.inline_format, colors=ps.inline_color)
 
                     if uncertainty_overlay and not render_uncertainty and grid_result.U_array is not None:
-                        u_lines = ax.contour(X, Y, grid_result.U_array[i][j], levels=max(ps.line_levels // 2, 5),
+                        u_arr = z_tf.transform_uncertainty(grid_result.U_array[i][j]) if z_tf is not None else grid_result.U_array[i][j]
+                        u_lines = ax.contour(X, Y, u_arr, levels=max(ps.line_levels // 2, 5),
                                              colors="#e74c3c", linestyles="--", linewidths=0.7)
                         ax.clabel(u_lines, inline=True, fontsize=max(ps.inline_fontsize - 1, 6), fmt="u=%1.2f", colors="#e74c3c")
 
                     if ps.scatter_data and grid_result.scatter_array is not None:
-                        cls._render_scatter(ax, grid_result.scatter_array[i][j], ps, z_min, z_max, Z_ij, x_min, x_max, y_min, y_max)
+                        cls._render_scatter(
+                            ax, grid_result.scatter_array[i][j], ps, z_min, z_max, Z_ij,
+                            x_min, x_max, y_min, y_max, x_tf=x_tf, y_tf=y_tf, z_tf=z_tf,
+                        )
                     else:
                         ax.set_xlim(x_min, x_max)
                         ax.set_ylim(y_min, y_max)
@@ -214,14 +251,19 @@ class MultiContourEngine:
     def _render_scatter(
         cls, ax: Any, pts: Any, ps: PlotSettings, z_min: float, z_max: float, Z_ij: np.ndarray,
         x_min: float, x_max: float, y_min: float, y_max: float,
+        x_tf: Optional[ResolvedAxisTransform] = None,
+        y_tf: Optional[ResolvedAxisTransform] = None,
+        z_tf: Optional[ResolvedAxisTransform] = None,
     ) -> None:
         if pts is None or len(pts) < 2 or len(pts[0]) == 0:
             ax.set_xlim(x_min, x_max)
             ax.set_ylim(y_min, y_max)
             return
-        x_pts, y_pts = pts[0], pts[1]
+        x_pts = x_tf.transform(pts[0]) if x_tf is not None else pts[0]
+        y_pts = y_tf.transform(pts[1]) if y_tf is not None else pts[1]
         color_mode = getattr(ps, "scatter_color_mode", "Fixed Color")
         if color_mode == "Output Value (Colormap)" and len(pts) >= 3 and pts[2] is not None and len(pts[2]) > 0:
+            c_vals = z_tf.transform(pts[2]) if z_tf is not None else pts[2]
             s_cmap = ps.scatter_cmap or ps.cmap
             if ps.scatter_vmin is not None and ps.scatter_vmax is not None:
                 s_vmin, s_vmax = ps.scatter_vmin, ps.scatter_vmax
@@ -231,7 +273,7 @@ class MultiContourEngine:
                 s_vmin, s_vmax = float(np.min(Z_ij)), float(np.max(Z_ij))
                 if np.isclose(s_vmin, s_vmax):
                     s_vmin, s_vmax = s_vmin - 1e-6, s_vmax + 1e-6
-            ax.scatter(x_pts, y_pts, s=ps.scatter_size, c=pts[2], cmap=s_cmap, vmin=s_vmin, vmax=s_vmax,
+            ax.scatter(x_pts, y_pts, s=ps.scatter_size, c=c_vals, cmap=s_cmap, vmin=s_vmin, vmax=s_vmax,
                        edgecolors=ps.scatter_edgecolor, marker=ps.scatter_marker, zorder=5)
         else:
             ax.scatter(x_pts, y_pts, s=ps.scatter_size, c=ps.scatter_color,

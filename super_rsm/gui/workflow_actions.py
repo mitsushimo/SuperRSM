@@ -18,56 +18,49 @@ from super_rsm.gui.dialogs.inline_plot_edit_dialog import InlinePlotEditDialog, 
 from super_rsm.gui.dialogs.plot_config_dialog import PlotConfigDialog
 from super_rsm.gui.styles.palette import PALETTE
 from super_rsm.visualization.diagnostic_plots import build_report_figures, get_default_plot_metadata
+from super_rsm.visualization.normalization import PlotNormalizationConfig
 
 
 class RSMWorkflowMixin:
     """Mixin providing fit, optimize, evaluate, and constraint handlers for RSMApp."""
 
     def fill_bounds_from_data(self) -> None:
-        if self.state.df is None or not self.bound_entries:
-            return
+        if self.state.df is None or not self.bound_entries: return
         for col_name, (min_var, max_var) in self.bound_entries.items():
             if col_name in self.state.df.columns:
                 s = pd.to_numeric(self.state.df[col_name], errors="coerce").dropna()
-                if not s.empty:
-                    min_var.set(f"{float(s.min()):.6g}")
-                    max_var.set(f"{float(s.max()):.6g}")
+                if not s.empty: min_var.set(f"{float(s.min()):.6g}"); max_var.set(f"{float(s.max()):.6g}")
         self.state.set_status("Populated optimization bounds from dataset [min, max] ranges.")
 
     def clear_bounds_entries(self) -> None:
-        for min_var, max_var in self.bound_entries.values():
-            min_var.set(""); max_var.set("")
+        for min_var, max_var in self.bound_entries.values(): min_var.set(""); max_var.set("")
         self.state.set_status("Cleared optimization bounds.")
 
     def _render_full_report(self) -> None:
-        md_text = AppController.format_markdown_report(self.state.result, self.state.current_input_cols, self.state.current_output_col, self.state.last_opt_report_text)
-        figures = build_report_figures(self.state.result, plot_overrides=self.state.diagnostic_plot_overrides)
+        norm_cfg = self.state.plot_normalization
+        norm_note = norm_cfg.describe_active_normalization() if norm_cfg is not None else ""
+        md_text = AppController.format_markdown_report(self.state.result, self.state.current_input_cols, self.state.current_output_col, self.state.last_opt_report_text, normalization_note=norm_note)
+        try: figures = build_report_figures(self.state.result, plot_overrides=self.state.diagnostic_plot_overrides, normalization=norm_cfg, opt_output_val=self.state.get_opt_output_val())
+        except ValueError: figures = build_report_figures(self.state.result, plot_overrides=self.state.diagnostic_plot_overrides)
         self.results_view.set_report_text(md_text, figures=figures)
 
     def copy_results_to_clipboard(self) -> None:
         content = self.results_view.report_viewer.get_markdown_text().strip() or self.results_text.get("1.0", tk.END).strip()
-        if content:
-            self.clipboard_clear()
-            self.clipboard_append(content)
-            self.state.set_status("Copied Markdown model report to clipboard.")
+        if content: self.clipboard_clear(); self.clipboard_append(content); self.state.set_status("Copied Markdown model report to clipboard.")
 
     def fill_eval_from_optimal(self) -> None:
         if not self.state.opt_params_dict:
-            messagebox.showinfo("Info", "Run optimization first to populate optimal parameter values.", parent=self)
-            return
+            messagebox.showinfo("Info", "Run optimization first to populate optimal parameter values.", parent=self); return
         for col, var in self.eval_entries.items():
-            if col in self.state.opt_params_dict:
-                var.set(f"{self.state.opt_params_dict[col]:.6g}")
+            if col in self.state.opt_params_dict: var.set(f"{self.state.opt_params_dict[col]:.6g}")
         self.state.set_status("Populated evaluation inputs from the latest optimal solution.")
 
     def fill_eval_from_mean(self) -> None:
-        for col, var in self.eval_entries.items():
-            var.set(self.state.get_col_mean_str(col))
+        for col, var in self.eval_entries.items(): var.set(self.state.get_col_mean_str(col))
         self.state.set_status("Populated evaluation inputs with dataset column means.")
 
     def clear_eval_entries(self) -> None:
-        for var in self.eval_entries.values():
-            var.set("")
+        for var in self.eval_entries.values(): var.set("")
         self.state.set_status("Cleared evaluation input fields.")
 
     def clear_eval_history(self) -> None:
@@ -322,29 +315,32 @@ class RSMWorkflowMixin:
         self.eval_history_tree.insert("", tk.END, values=(rec["id"], inputs_str, rec["pred_str"], std_str))
         self.state.set_status(f"Evaluated {self.state.result.method} at ({inputs_str}) → {out_col} = {y_val:.6g}.")
 
-    def open_plot_config(self) -> None:
-        if not self.state.result or not self.state.current_input_cols:
-            return
-        if self.plot_config_win is not None and self.plot_config_win.winfo_exists():
-            self.plot_config_win.destroy()
+    def _on_plot_normalization_changed(self, norm_cfg: PlotNormalizationConfig) -> None:
+        self.state.plot_normalization = PlotNormalizationConfig.from_dict(norm_cfg)
+        if self.state.result is not None and self.state.current_input_cols:
+            self._render_full_report()
+            self.state.set_status("Applied plot-only normalization settings." if self.state.plot_normalization.has_any_enabled() else "Plot normalization disabled (raw units).")
+
+    def open_plot_config(self, initial_tab: int = 0) -> None:
+        if not self.state.result or not self.state.current_input_cols: return
+        if self.plot_config_win is not None and self.plot_config_win.winfo_exists(): self.plot_config_win.destroy()
         self.plot_config_win = PlotConfigDialog(
             self, self.state.current_input_cols, self.state.current_output_col,
             self.state.result, self.state.df, self.state.opt_params_dict,
+            normalization_config=self.state.plot_normalization,
+            on_normalization_changed=self._on_plot_normalization_changed, initial_tab=initial_tab,
         )
 
     def open_inline_plot_editor(self, plot_key: str) -> None:
-        if not self.state.result:
-            return
+        if not self.state.result: return
         if getattr(self, "inline_plot_edit_win", None) is not None and self.inline_plot_edit_win.winfo_exists():
             self.inline_plot_edit_win.destroy()
         defaults = get_default_plot_metadata(self.state.result, plot_key)
         curr_ovr = self.state.diagnostic_plot_overrides.get(plot_key, {})
-
         def _on_apply(new_ovr: Dict[str, Any], sync_terms: bool) -> None:
             merge_plot_overrides(self.state.diagnostic_plot_overrides, plot_key, new_ovr, sync_terms=sync_terms)
             self._render_full_report()
             self.state.set_status(f"Updated inline plot '{PLOT_CAPTIONS.get(plot_key, plot_key)}'.")
-
         self.inline_plot_edit_win = InlinePlotEditDialog(
             self, plot_key, PLOT_CAPTIONS.get(plot_key, plot_key), defaults, curr_ovr, on_apply=_on_apply
         )

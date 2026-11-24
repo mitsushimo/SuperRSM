@@ -291,3 +291,175 @@ def test_large_multi_contour_grid_no_label_title_overlap(m, n, outer_only, show_
                 assert not sup_bbox.overlaps(axes[0, j].title.get_window_extent(renderer=renderer))
     finally:
         plt.close(fig)
+
+
+def test_resolve_axis_transform_methods_and_errors():
+    """Verify minmax_01, coded_11, ratio transforms, uncertainty scaling, and error guards."""
+    from super_rsm.visualization.normalization import (
+        AxisNormalizationSpec,
+        PlotNormalizationConfig,
+        resolve_axis_transform,
+    )
+
+    raw = np.array([100.0, 200.0, 300.0])
+
+    # Min-Max [0, 1]
+    tf_mm = resolve_axis_transform(
+        AxisNormalizationSpec(enabled=True, method="minmax_01", reference="dataset"),
+        data_values=raw,
+    )
+    assert tf_mm is not None
+    assert np.allclose(tf_mm.transform(raw), [0.0, 0.5, 1.0])
+    assert np.isclose(tf_mm.transform_uncertainty(20.0), 0.1)
+
+    # Coded [-1, 1]
+    tf_cd = resolve_axis_transform(
+        AxisNormalizationSpec(enabled=True, method="coded_11", reference="dataset"),
+        data_values=raw,
+    )
+    assert tf_cd is not None
+    assert np.allclose(tf_cd.transform(raw), [-1.0, 0.0, 1.0])
+    assert np.isclose(tf_cd.transform_uncertainty(20.0), 0.2)
+
+    # Ratio to optimal / mean / custom
+    tf_opt = resolve_axis_transform(
+        AxisNormalizationSpec(enabled=True, method="ratio", reference="optimal"),
+        data_values=raw, opt_value=250.0,
+    )
+    assert tf_opt is not None
+    assert np.allclose(tf_opt.transform([250.0, 500.0]), [1.0, 2.0])
+
+    tf_mean = resolve_axis_transform(
+        AxisNormalizationSpec(enabled=True, method="ratio", reference="dataset_mean"),
+        data_values=raw,
+    )
+    assert tf_mean is not None
+    assert np.isclose(tf_mean.transform(200.0), 1.0)
+
+    tf_custom = resolve_axis_transform(
+        AxisNormalizationSpec(enabled=True, method="ratio", reference="custom", custom_ref=50.0),
+        data_values=raw,
+    )
+    assert tf_custom is not None
+    assert np.isclose(tf_custom.transform(100.0), 2.0)
+
+    # Degenerate range and zero reference must raise ValueError
+    with pytest.raises(ValueError, match="constant range"):
+        resolve_axis_transform(
+            AxisNormalizationSpec(enabled=True, method="minmax_01", reference="dataset"),
+            data_values=np.array([5.0, 5.0]),
+        )
+    with pytest.raises(ValueError, match="zero or unavailable"):
+        resolve_axis_transform(
+            AxisNormalizationSpec(enabled=True, method="ratio", reference="custom", custom_ref=0.0),
+            data_values=raw,
+        )
+
+    # Round-trip serialization
+    cfg = PlotNormalizationConfig(
+        apply_to_contour=True,
+        apply_to_uncertainty=True,
+        apply_to_parity=True,
+        x_axis=AxisNormalizationSpec(enabled=True, method="minmax_01", reference="dataset"),
+        z_axis=AxisNormalizationSpec(enabled=True, method="coded_11", reference="custom", custom_min=10.0, custom_max=50.0),
+    )
+    restored = PlotNormalizationConfig.from_dict(cfg.to_dict())
+    assert restored.to_dict() == cfg.to_dict()
+    assert restored.has_any_enabled() is True
+    assert "Inline Parity Plot" in restored.describe_active_normalization()
+
+
+def test_visualization_service_normalization_leaves_upstream_raw():
+    """Verify contour + uncertainty normalization transforms display only and leaves model/dataset raw."""
+    import pandas as pd
+    from super_rsm import rsm_fromDF
+    from super_rsm.visualization.normalization import AxisNormalizationSpec, PlotNormalizationConfig
+
+    rng = np.random.default_rng(7)
+    x1 = rng.uniform(100.0, 300.0, size=30)
+    x2 = rng.uniform(10.0, 50.0, size=30)
+    y = 500.0 + 1.5 * x1 + 4.0 * x2 + rng.normal(0.0, 1.0, size=30)
+    df = pd.DataFrame({"Temp": x1, "Press": x2, "Yield": y})
+
+    result = rsm_fromDF(df, ["Temp", "Press"], "Yield", method="Gaussian Process", test_size=0.2)
+    raw_pred_before = result.evaluate_point([200.0, 30.0])
+    raw_x_before = result.dataset.X_train.copy()
+
+    norm_cfg = PlotNormalizationConfig(
+        apply_to_contour=True,
+        apply_to_uncertainty=True,
+        append_unit_suffix=False,
+        x_axis=AxisNormalizationSpec(enabled=True, method="minmax_01", reference="plot_range"),
+        y_axis=AxisNormalizationSpec(enabled=True, method="coded_11", reference="plot_range"),
+        z_axis=AxisNormalizationSpec(enabled=True, method="ratio", reference="custom", custom_ref=500.0),
+    )
+    cfg = {
+        "x": (0, np.linspace(100.0, 300.0, 15)),
+        "y": (1, np.linspace(10.0, 50.0, 15)),
+        "fixed": [],
+    }
+    ps = PlotSettings(
+        show_plot=False,
+        show_colorbar=True,
+        colorbar_label="Yield",
+        scatter_data=True,
+        plot_uncertainty=True,
+        normalization=norm_cfg.to_dict(),
+    )
+    fig, axes = VisualizationService.visualize_result(
+        result, config=cfg, title="Normalized Surface", xlabel="Temp", ylabel="Press", plot_settings=ps, show=False
+    )
+    try:
+        ax = axes[0, 0]
+        assert np.allclose(ax.get_xlim(), [0.0, 1.0], atol=1e-6)
+        assert np.allclose(ax.get_ylim(), [-1.0, 1.0], atol=1e-6)
+        # Labels must remain unmodified when append_unit_suffix=False
+        assert ax.get_xlabel() == "Temp"
+        assert ax.get_ylabel() == "Press"
+
+        # Uncertainty figure must also have normalized X/Y axes
+        assert hasattr(fig, "uncertainty_figure")
+        unc_ax = fig.uncertainty_axes[0, 0]
+        assert np.allclose(unc_ax.get_xlim(), [0.0, 1.0], atol=1e-6)
+        assert np.allclose(unc_ax.get_ylim(), [-1.0, 1.0], atol=1e-6)
+
+        # Upstream data & model predictions must be 100% unchanged
+        assert np.allclose(result.dataset.X_train, raw_x_before)
+        assert np.isclose(result.evaluate_point([200.0, 30.0]), raw_pred_before)
+    finally:
+        if hasattr(fig, "uncertainty_figure"):
+            plt.close(fig.uncertainty_figure)
+        plt.close(fig)
+
+
+def test_parity_plot_normalization_and_r2_invariance():
+    """Verify inline parity plot normalizes Actual/Predicted ticks while keeping R² and raw model intact."""
+    import pandas as pd
+    from super_rsm import rsm_fromDF
+    from super_rsm.visualization.diagnostic_plots import create_parity_plot
+    from super_rsm.visualization.normalization import AxisNormalizationSpec, PlotNormalizationConfig
+
+    rng = np.random.default_rng(11)
+    x1 = rng.uniform(10.0, 20.0, size=25)
+    x2 = rng.uniform(1.0, 5.0, size=25)
+    y = 1000.0 + 25.0 * x1 - 10.0 * x2 + rng.normal(0.0, 2.0, size=25)
+    df = pd.DataFrame({"X1": x1, "X2": x2, "Output": y})
+
+    result = rsm_fromDF(df, ["X1", "X2"], "Output", method="Polynomial OLS", test_size=0.2, degree=2)
+    norm_cfg = PlotNormalizationConfig(
+        apply_to_parity=True,
+        append_unit_suffix=False,
+        z_axis=AxisNormalizationSpec(enabled=True, method="minmax_01", reference="dataset"),
+    )
+    fig_raw = create_parity_plot(result)
+    fig_norm = create_parity_plot(result, normalization=norm_cfg)
+    assert fig_raw is not None and fig_norm is not None
+
+    ax_raw, ax_norm = fig_raw.axes[0], fig_norm.axes[0]
+    assert ax_raw.get_xlim()[1] > 500.0
+    assert -0.3 <= ax_norm.get_xlim()[0] <= 0.1
+    assert 0.9 <= ax_norm.get_xlim()[1] <= 1.3
+    assert ax_norm.get_title() == ax_raw.get_title()
+    assert ax_norm.get_xlabel() == "Actual Output"
+    assert ax_norm.get_ylabel() == "Predicted Output"
+

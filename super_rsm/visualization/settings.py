@@ -67,6 +67,7 @@ class PlotSettings:
 
     plot_uncertainty: bool = False
     show_plot: bool = False
+    normalization: Optional[Dict[str, Any]] = None
 
     custom_options: Dict[str, Any] = field(default_factory=dict)
 

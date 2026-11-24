@@ -12,10 +12,16 @@ Uses Figure and FigureCanvasAgg directly to avoid global pyplot state or memory 
 
 import base64
 import io
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 import numpy as np
+
+from super_rsm.visualization.normalization import (
+    PlotNormalizationConfig,
+    format_normalized_label,
+    resolve_axis_transform,
+)
 
 
 def figure_to_png_bytes(fig: Figure, dpi: int = 110) -> bytes:
@@ -244,14 +250,15 @@ def create_importance_plot(result: Any, overrides: Optional[Dict[str, Any]] = No
     return fig
 
 
-def create_parity_plot(result: Any, overrides: Optional[Dict[str, Any]] = None) -> Optional[Figure]:
+def create_parity_plot(
+    result: Any, overrides: Optional[Dict[str, Any]] = None,
+    normalization: Optional[Union[PlotNormalizationConfig, Dict[str, Any]]] = None,
+    opt_output_val: Optional[float] = None,
+) -> Optional[Figure]:
     """Create an Actual vs. Predicted parity scatter plot for Training and Test partitions."""
-    if result is None or getattr(result, "dataset", None) is None:
+    if result is None or getattr(result, "dataset", None) is None or len(result.dataset.X_train) == 0:
         return None
     ds = result.dataset
-    if len(ds.X_train) == 0:
-        return None
-
     y_tr_actual = np.asarray(ds.y_train, dtype=float).ravel()
     y_tr_pred = np.asarray(result.evaluate_batch(ds.X_train), dtype=float).ravel()
 
@@ -260,9 +267,22 @@ def create_parity_plot(result: Any, overrides: Optional[Dict[str, Any]] = None) 
         y_te_actual = np.asarray(ds.y_test, dtype=float).ravel()
         y_te_pred = np.asarray(result.evaluate_batch(ds.X_test), dtype=float).ravel()
         all_vals = np.concatenate([y_tr_actual, y_tr_pred, y_te_actual, y_te_pred])
+        raw_y_data = np.concatenate([y_tr_actual, y_te_actual])
     else:
         y_te_actual, y_te_pred = np.array([]), np.array([])
-        all_vals = np.concatenate([y_tr_actual, y_tr_pred])
+        all_vals, raw_y_data = np.concatenate([y_tr_actual, y_tr_pred]), y_tr_actual
+
+    norm_cfg = PlotNormalizationConfig.from_dict(normalization) if normalization is not None else None
+    z_tf = None
+    if norm_cfg is not None and norm_cfg.is_parity_normalized():
+        z_tf = resolve_axis_transform(norm_cfg.z_axis, raw_y_data, all_vals, opt_output_val, "Parity Output")
+        if z_tf is not None:
+            y_tr_actual, y_tr_pred = z_tf.transform(y_tr_actual), z_tf.transform(y_tr_pred)
+            if has_test:
+                y_te_actual, y_te_pred = z_tf.transform(y_te_actual), z_tf.transform(y_te_pred)
+                all_vals = np.concatenate([y_tr_actual, y_tr_pred, y_te_actual, y_te_pred])
+            else:
+                all_vals = np.concatenate([y_tr_actual, y_tr_pred])
 
     finite_vals = all_vals[np.isfinite(all_vals)]
     if len(finite_vals) == 0:
@@ -274,52 +294,36 @@ def create_parity_plot(result: Any, overrides: Optional[Dict[str, Any]] = None) 
 
     ovr = overrides or {}
     leg_map: Dict[str, str] = ovr.get("legend_labels") or {}
-    ideal_lbl = leg_map.get("ideal") or "1:1 Ideal Fit"
-    train_lbl = leg_map.get("train") or f"Train (n={len(y_tr_actual)})"
-    test_lbl = leg_map.get("test") or f"Test (n={len(y_te_actual)})"
-
     fig = Figure(figsize=(5.4, 3.6), dpi=100, facecolor="#FFFFFF")
     ax = fig.subplots(1, 1)
-
-    ax.plot([lo, hi], [lo, hi], linestyle="--", color="#64748B", linewidth=1.2, label=ideal_lbl, zorder=1)
-    ax.scatter(
-        y_tr_actual, y_tr_pred, c="#2563EB", edgecolors="#FFFFFF", linewidth=0.5,
-        s=36, alpha=0.82, label=train_lbl, zorder=2,
-    )
+    ax.plot([lo, hi], [lo, hi], linestyle="--", color="#64748B", linewidth=1.2, label=leg_map.get("ideal") or "1:1 Ideal Fit", zorder=1)
+    ax.scatter(y_tr_actual, y_tr_pred, c="#2563EB", edgecolors="#FFFFFF", linewidth=0.5, s=36, alpha=0.82, label=leg_map.get("train") or f"Train (n={len(y_tr_actual)})", zorder=2)
     if has_test:
-        ax.scatter(
-            y_te_actual, y_te_pred, c="#16A34A", edgecolors="#FFFFFF", linewidth=0.6,
-            marker="^", s=44, alpha=0.9, label=test_lbl, zorder=3,
-        )
+        ax.scatter(y_te_actual, y_te_pred, c="#16A34A", edgecolors="#FFFFFF", linewidth=0.6, marker="^", s=44, alpha=0.9, label=leg_map.get("test") or f"Test (n={len(y_te_actual)})", zorder=3)
 
     target_lbl = getattr(result, "target_name", "Output") or "Output"
-    ax.set_xlim(lo, hi)
-    ax.set_ylim(lo, hi)
-    ax.set_xlabel(ovr.get("xlabel") or f"Actual {target_lbl}", fontsize=8.5, fontweight="bold", color="#334155")
-    ax.set_ylabel(ovr.get("ylabel") or f"Predicted {target_lbl}", fontsize=8.5, fontweight="bold", color="#334155")
-    ax.set_title(
-        ovr.get("title") or f"Actual vs. Predicted Parity — {result.method} (R² = {result.R_sq:.4f})",
-        fontsize=9.5, fontweight="bold", color="#0F172A", pad=8,
-    )
+    append_suffix = bool(norm_cfg and norm_cfg.append_unit_suffix)
+    ax.set_xlim(lo, hi); ax.set_ylim(lo, hi)
+    ax.set_xlabel(ovr.get("xlabel") or format_normalized_label(f"Actual {target_lbl}", z_tf, append_suffix), fontsize=8.5, fontweight="bold", color="#334155")
+    ax.set_ylabel(ovr.get("ylabel") or format_normalized_label(f"Predicted {target_lbl}", z_tf, append_suffix), fontsize=8.5, fontweight="bold", color="#334155")
+    ax.set_title(ovr.get("title") or f"Actual vs. Predicted Parity — {result.method} (R² = {result.R_sq:.4f})", fontsize=9.5, fontweight="bold", color="#0F172A", pad=8)
     ax.grid(True, linestyle="--", alpha=0.4, color="#CBD5E1")
     ax.legend(loc="upper left", fontsize=8, framealpha=0.92)
-
-    _style_axes(ax)
-    fig.tight_layout()
+    _style_axes(ax); fig.tight_layout()
     return fig
 
 
 def build_report_figures(
-    result: Any,
-    plot_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
+    result: Any, plot_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
+    normalization: Optional[Union[PlotNormalizationConfig, Dict[str, Any]]] = None,
+    opt_output_val: Optional[float] = None,
 ) -> Dict[str, Figure]:
     """Generate all applicable diagnostic figures for a fitted RSMResult, applying optional user overrides."""
     figures: Dict[str, Figure] = {}
     if result is None:
         return figures
     ovr = plot_overrides or {}
-
-    parity_fig = create_parity_plot(result, overrides=ovr.get("parity"))
+    parity_fig = create_parity_plot(result, overrides=ovr.get("parity"), normalization=normalization, opt_output_val=opt_output_val)
     if parity_fig is not None:
         figures["parity"] = parity_fig
 

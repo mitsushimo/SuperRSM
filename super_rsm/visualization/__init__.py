@@ -5,6 +5,13 @@ Zero global side-effects: importing this package does not mutate matplotlib.rcPa
 """
 
 from super_rsm.visualization.settings import PlotSettings, default_plot_settings
+from super_rsm.visualization.normalization import (
+    AxisNormalizationSpec,
+    PlotNormalizationConfig,
+    ResolvedAxisTransform,
+    format_normalized_label,
+    resolve_axis_transform,
+)
 from super_rsm.visualization.grid import GridSampler
 from super_rsm.visualization.contour import (
     MultiContourEngine,
@@ -31,6 +38,11 @@ __all__ = [
     "MultiContourEngine",
     "GridSampler",
     "PlotSettings",
+    "AxisNormalizationSpec",
+    "PlotNormalizationConfig",
+    "ResolvedAxisTransform",
+    "resolve_axis_transform",
+    "format_normalized_label",
     "plot_multi_contour",
     "validate_multi_contour_inputs",
     "plot_a_function",

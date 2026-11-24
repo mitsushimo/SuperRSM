@@ -14,6 +14,7 @@ from super_rsm.core.persistence import load_rsm_project, save_rsm_project
 from super_rsm.gui.components.treeview_helper import clear_treeview
 from super_rsm.gui.controller import AppController
 from super_rsm.gui.styles.palette import PALETTE
+from super_rsm.visualization.normalization import PlotNormalizationConfig
 
 
 class RSMMenuMixin:
@@ -79,6 +80,7 @@ class RSMMenuMixin:
             "eval_pred_str": self.results_view.eval_pred_var.get(),
             "eval_unc_str": self.results_view.eval_unc_var.get(),
             "diagnostic_plot_overrides": dict(self.state.diagnostic_plot_overrides),
+            "plot_normalization": self.state.plot_normalization.to_dict(),
         }
 
     def save_project(self, filepath: Optional[str] = None, save_as: bool = False) -> bool:
@@ -218,6 +220,7 @@ class RSMMenuMixin:
             self.state.opt_params_dict = {k: float(v) for k, v in st.get("opt_params_dict", {}).items()}
             self.state.last_opt_report_text = st.get("last_opt_report_text", "")
             self.state.diagnostic_plot_overrides = dict(st.get("diagnostic_plot_overrides", {}))
+            self.state.plot_normalization = PlotNormalizationConfig.from_dict(st.get("plot_normalization"))
 
             r2_color = (
                 PALETTE["success"] if result.R_sq >= 0.8 else (PALETTE["warning"] if result.R_sq >= 0.5 else PALETTE["danger"])

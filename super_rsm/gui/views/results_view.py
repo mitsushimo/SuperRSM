@@ -31,6 +31,7 @@ class ResultsView(ttk.Notebook):
         on_clear_history: Callable[[], None],
         on_history_double_click: Callable[[], None],
         on_edit_plot: Optional[Callable[[str], None]] = None,
+        on_open_normalization: Optional[Callable[[], None]] = None,
         fonts: Optional[Dict[str, tuple]] = None,
     ):
         super().__init__(parent)
@@ -39,7 +40,7 @@ class ResultsView(ttk.Notebook):
         self.on_eval_point = on_eval_point
 
         self._build_tables_tab()
-        self._build_report_tab(on_copy_report, on_edit_plot)
+        self._build_report_tab(on_copy_report, on_edit_plot, on_open_normalization)
         self._build_eval_tab(
             on_eval_point,
             on_fill_eval_optimal,
@@ -97,6 +98,7 @@ class ResultsView(ttk.Notebook):
         self,
         on_copy_report: Callable[[], None],
         on_edit_plot: Optional[Callable[[str], None]] = None,
+        on_open_normalization: Optional[Callable[[], None]] = None,
     ) -> None:
         report_tab = ttk.Frame(self, style="Card.TFrame", padding=10)
         self.add(report_tab, text="  Model Equation & Full Report  ")
@@ -111,6 +113,10 @@ class ResultsView(ttk.Notebook):
         ttk.Button(
             report_toolbar, text="Copy Report", style="Small.TButton", command=on_copy_report
         ).pack(side=tk.RIGHT)
+        if on_open_normalization is not None:
+            ttk.Button(
+                report_toolbar, text="Normalize Plots...", style="Small.TButton", command=on_open_normalization
+            ).pack(side=tk.RIGHT, padx=(0, 6))
 
         self.report_viewer = ReportViewer(report_tab, fonts=self.fonts, on_edit_plot=on_edit_plot)
         self.report_viewer.pack(fill=tk.BOTH, expand=True)

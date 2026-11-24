@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pandas as pd
 
 from super_rsm.core.result import RSMResult
+from super_rsm.visualization.normalization import PlotNormalizationConfig
 
 
 @dataclass
@@ -29,6 +30,7 @@ class AppState:
     linear_constraints: List[Dict[str, Any]] = field(default_factory=list)
     eval_history: List[Dict[str, Any]] = field(default_factory=list)
     diagnostic_plot_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    plot_normalization: PlotNormalizationConfig = field(default_factory=PlotNormalizationConfig)
 
     is_busy: bool = False
     busy_message: str = ""
@@ -83,4 +85,14 @@ class AppState:
         if series.empty:
             return "0"
         return f"{float(series.mean()):.6g}"
+
+    def get_opt_output_val(self) -> Optional[float]:
+        """Evaluate fitted model at the current optimal parameter vector, if available."""
+        if not self.opt_params_dict or self.result is None or not self.current_input_cols:
+            return None
+        try:
+            vec = [self.opt_params_dict.get(c, 0.0) for c in self.current_input_cols]
+            return float(self.result.evaluate_point(vec, return_std=False))
+        except Exception:
+            return None
 

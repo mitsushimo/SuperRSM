@@ -201,9 +201,12 @@ class AppController:
         input_cols: List[str],
         output_col: str,
         last_opt_report_text: str = "",
+        normalization_note: str = "",
     ) -> str:
         """Format complete diagnostic report including coefficients, formula, p-values, and ANOVA."""
-        return format_full_report_text(result, input_cols, output_col, last_opt_report_text)
+        return format_full_report_text(
+            result, input_cols, output_col, last_opt_report_text, normalization_note=normalization_note
+        )
 
     @staticmethod
     def format_markdown_report(
@@ -211,7 +214,10 @@ class AppController:
         input_cols: List[str],
         output_col: str,
         last_opt_report_text: str = "",
+        normalization_note: str = "",
     ) -> str:
         """Format complete diagnostic report in Markdown format."""
-        return format_full_report_markdown(result, input_cols, output_col, last_opt_report_text)
+        return format_full_report_markdown(
+            result, input_cols, output_col, last_opt_report_text, normalization_note=normalization_note
+        )
 

@@ -150,6 +150,7 @@ class RSMApp(RSMMenuMixin, RSMWorkflowMixin, tk.Tk):
             on_clear_history=self.clear_eval_history,
             on_history_double_click=self._on_eval_history_double_click,
             on_edit_plot=self.open_inline_plot_editor,
+            on_open_normalization=lambda: self.open_plot_config(initial_tab=3),
             fonts=self.fonts,
         )
         self.results_view.pack(fill=tk.BOTH, expand=True)

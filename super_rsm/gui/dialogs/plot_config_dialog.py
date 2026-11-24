@@ -12,39 +12,33 @@ import numpy as np
 import pandas as pd
 
 from super_rsm.gui.components.scrollable_panel import ScrollablePanel
+from super_rsm.gui.dialogs.plot_normalization_tab import PlotNormalizationTab, format_slice_labels
 from super_rsm.gui.styles.palette import COMMON_CMAPS, COMMON_LINESTYLES, COMMON_MARKERS, PALETTE
+from super_rsm.visualization.normalization import PlotNormalizationConfig
 
 
 class PlotConfigDialog(tk.Toplevel):
     """Modal configuration window for multi-dimensional contour plotting."""
 
     def __init__(
-        self,
-        parent: tk.Misc,
-        input_cols: List[str],
-        output_col: str,
-        result: Any,
-        df: Optional[pd.DataFrame] = None,
-        opt_params_dict: Optional[Dict[str, float]] = None,
+        self, parent: tk.Misc, input_cols: List[str], output_col: str, result: Any,
+        df: Optional[pd.DataFrame] = None, opt_params_dict: Optional[Dict[str, float]] = None,
         on_generate_plot: Optional[Callable[..., None]] = None,
+        normalization_config: Optional[PlotNormalizationConfig] = None,
+        on_normalization_changed: Optional[Callable[[PlotNormalizationConfig], None]] = None,
+        initial_tab: int = 0,
     ):
         super().__init__(parent)
         self.title("Configure Multi-Dimensional Contour Plot")
-        self.geometry("780x720")
-        self.minsize(680, 600)
-        self.configure(bg=PALETTE["bg_main"])
-
-        self.input_cols = input_cols
-        self.output_col = output_col or "Response"
-        self.result = result
-        self.df = df
-        self.opt_params_dict = opt_params_dict or {}
-        self.on_generate_plot = on_generate_plot
-
+        self.geometry("820x740"); self.minsize(720, 620); self.configure(bg=PALETTE["bg_main"])
+        self.input_cols, self.output_col, self.result, self.df = input_cols, (output_col or "Response"), result, df
+        self.opt_params_dict, self.on_generate_plot, self.on_normalization_changed = (opt_params_dict or {}), on_generate_plot, on_normalization_changed
+        self._initial_norm_cfg = PlotNormalizationConfig.from_dict(normalization_config) if normalization_config is not None else PlotNormalizationConfig()
+        self._initial_tab = int(initial_tab)
         self.plot_param_configs: Dict[str, Dict[str, Any]] = {}
         self.adv_settings_vars: Dict[str, tk.Variable] = {}
         self.adv_settings_widgets: Dict[str, tk.Widget] = {}
-
+        self.norm_tab: Optional[PlotNormalizationTab] = None
         self._build_ui()
 
     def _get_col_range_str(self, col_name: str) -> str:
@@ -66,12 +60,11 @@ class PlotConfigDialog(tk.Toplevel):
         return f"{min_v:.4g}", f"{max_v:.4g}", f"{opt_v:.6g}", f"{q25:.4g}, {q50:.4g}, {q75:.4g}"
 
     def _build_ui(self) -> None:
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=12, pady=(12, 6))
-        self._build_roles_tab(notebook)
-        self._build_labels_tab(notebook)
-        self._build_advanced_tab(notebook)
-
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=12, pady=(12, 6))
+        self._build_roles_tab(self.notebook); self._build_labels_tab(self.notebook)
+        self._build_advanced_tab(self.notebook); self._build_normalization_tab(self.notebook)
+        if 0 <= self._initial_tab < 4: self.notebook.select(self._initial_tab)
         btn_frame = ttk.Frame(self, padding=(12, 6, 12, 12))
         btn_frame.pack(fill=tk.X)
         ttk.Button(btn_frame, text="Load Settings...", command=self.load_plot_settings).pack(side=tk.LEFT, padx=(0, 6))
@@ -81,29 +74,21 @@ class PlotConfigDialog(tk.Toplevel):
     def _build_roles_tab(self, notebook: ttk.Notebook) -> None:
         roles_frame = ttk.Frame(notebook, style="Card.TFrame", padding="14")
         notebook.add(roles_frame, text="  1. Parameter Roles & Ranges  ")
-
-        roles_top = ttk.Frame(roles_frame, style="Card.TFrame")
-        roles_top.pack(fill=tk.X, pady=(0, 10))
+        roles_top = ttk.Frame(roles_frame, style="Card.TFrame"); roles_top.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(roles_top, text="Assign each input variable to a plot axis, subplot grid (P/Q), or fixed slice value:", style="CardBold.TLabel").pack(side=tk.LEFT)
-
-        roles_actions = ttk.Frame(roles_frame, style="Card.TFrame")
-        roles_actions.pack(fill=tk.X, pady=(0, 10))
+        roles_actions = ttk.Frame(roles_frame, style="Card.TFrame"); roles_actions.pack(fill=tk.X, pady=(0, 10))
         ttk.Button(roles_actions, text="Reset X/Y Ranges to Data [Min, Max]", style="Small.TButton", command=self._reset_plot_axes_to_data).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(roles_actions, text="Set Fixed Values to Optimal Solution", style="Small.TButton", command=self._set_plot_fixed_to_optimal).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(roles_actions, text="Set Fixed Values to Data Mean", style="Small.TButton", command=self._set_plot_fixed_to_mean).pack(side=tk.LEFT)
-
-        panel = ScrollablePanel(roles_frame)
-        panel.pack(fill=tk.BOTH, expand=True)
+        panel = ScrollablePanel(roles_frame); panel.pack(fill=tk.BOTH, expand=True)
         roles = ["X-Axis", "Y-Axis", "Row-Axis (P)", "Column-Axis (Q)", "Fixed"]
         for idx, col in enumerate(self.input_cols):
-            row_frame = ttk.Frame(panel.inner_frame, style="Card.TFrame")
-            row_frame.pack(fill=tk.X, pady=5)
+            row_frame = ttk.Frame(panel.inner_frame, style="Card.TFrame"); row_frame.pack(fill=tk.X, pady=5)
             ttk.Label(row_frame, text=col, width=16, style="CardBold.TLabel").pack(side=tk.LEFT)
             role_var = tk.StringVar()
             role_combo = ttk.Combobox(row_frame, textvariable=role_var, values=roles, state="readonly", width=15)
             role_combo.pack(side=tk.LEFT, padx=6)
-            input_frame = ttk.Frame(row_frame, style="Card.TFrame")
-            input_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
+            input_frame = ttk.Frame(row_frame, style="Card.TFrame"); input_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
             self.plot_param_configs[col] = {"role_var": role_var, "input_frame": input_frame, "vars": {}}
             role_combo.bind("<<ComboboxSelected>>", lambda e, c=col: self._update_plot_role_inputs(c))
             role_combo.set("X-Axis" if idx == 0 else ("Y-Axis" if idx == 1 else "Fixed"))
@@ -112,15 +97,12 @@ class PlotConfigDialog(tk.Toplevel):
     def _build_labels_tab(self, notebook: ttk.Notebook) -> None:
         labels_frame = ttk.Frame(notebook, style="Card.TFrame", padding="14")
         notebook.add(labels_frame, text="  2. Titles & Axis Labels  ")
-
         def add_label_field(text: str, default_val: str) -> tk.StringVar:
-            frame = ttk.Frame(labels_frame, style="Card.TFrame")
-            frame.pack(fill=tk.X, pady=6)
+            frame = ttk.Frame(labels_frame, style="Card.TFrame"); frame.pack(fill=tk.X, pady=6)
             ttk.Label(frame, text=text, width=36, style="Card.TLabel").pack(side=tk.LEFT)
             var = tk.StringVar(value=default_val)
             ttk.Entry(frame, textvariable=var).pack(side=tk.LEFT, fill=tk.X, expand=True)
             return var
-
         self.plot_title_var = add_label_field("Plot Title:", f"RSM Contour Plot — {self.output_col}")
         self.x_label_var = add_label_field("X-Axis Label (Leave empty for column name):", "")
         self.y_label_var = add_label_field("Y-Axis Label (Leave empty for column name):", "")
@@ -133,29 +115,22 @@ class PlotConfigDialog(tk.Toplevel):
     def _build_advanced_tab(self, notebook: ttk.Notebook) -> None:
         adv_frame = ttk.Frame(notebook, style="Card.TFrame", padding="12")
         notebook.add(adv_frame, text="  3. Styling, Scatter & Uncertainty  ")
-        adv_frame.columnconfigure(0, weight=1)
-        adv_frame.columnconfigure(1, weight=1)
-
+        adv_frame.columnconfigure(0, weight=1); adv_frame.columnconfigure(1, weight=1)
         def add_adv_field(parent: tk.Misc, key: str, text: str, default_val: Any, var_type: type = tk.StringVar, options: Optional[List[str]] = None, readonly_options: bool = True) -> tk.Variable:
-            frame = ttk.Frame(parent, style="Card.TFrame")
-            frame.pack(fill=tk.X, pady=3)
+            frame = ttk.Frame(parent, style="Card.TFrame"); frame.pack(fill=tk.X, pady=3)
             ttk.Label(frame, text=text, width=24, style="Card.TLabel").pack(side=tk.LEFT)
             var = var_type(value=default_val)
             if var_type == tk.BooleanVar:
                 widget = ttk.Checkbutton(frame, variable=var)
-                if text.startswith("Plot Uncertainty") and not getattr(self.result, "supports_uncertainty", False):
-                    widget.config(state="disabled")
+                if text.startswith("Plot Uncertainty") and not getattr(self.result, "supports_uncertainty", False): widget.config(state="disabled")
                 widget.pack(side=tk.LEFT)
             elif options is not None:
                 widget = ttk.Combobox(frame, textvariable=var, values=options, state="readonly" if readonly_options else "normal", width=16)
                 widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
             else:
-                widget = ttk.Entry(frame, textvariable=var, width=16)
-                widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            self.adv_settings_vars[key] = var
-            self.adv_settings_widgets[key] = widget
+                widget = ttk.Entry(frame, textvariable=var, width=16); widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self.adv_settings_vars[key], self.adv_settings_widgets[key] = var, widget
             return var
-
         contour_group = ttk.LabelFrame(adv_frame, text="Contour & Surface Styling", padding="10")
         contour_group.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 6), pady=(0, 8))
         add_adv_field(contour_group, "cmap", "Colormap (cmap):", "plasma", options=COMMON_CMAPS, readonly_options=False)
@@ -166,20 +141,17 @@ class PlotConfigDialog(tk.Toplevel):
         add_adv_field(contour_group, "inline_color", "Inline Color:", "white")
         add_adv_field(contour_group, "inline_fontsize", "Inline Fontsize:", 9, tk.IntVar)
         add_adv_field(contour_group, "inline_format", "Inline Format:", "%1.1f")
-
         scale_group = ttk.LabelFrame(adv_frame, text="Colorbar, Grid, Layout & Uncertainty", padding="10")
         scale_group.grid(row=1, column=0, sticky=tk.NSEW, padx=(0, 6), pady=(0, 4))
         add_adv_field(scale_group, "uniform_cmap", "Uniform Colormap:", True, tk.BooleanVar)
         add_adv_field(scale_group, "show_colorbar", "Show Colorbar:", False, tk.BooleanVar)
         self.adv_settings_vars["colorbar_label"] = self.colorbar_label_var
-
         add_adv_field(scale_group, "grid_color", "Grid Color:", "gray")
         add_adv_field(scale_group, "grid_linestyle", "Grid Linestyle:", "--", options=COMMON_LINESTYLES, readonly_options=False)
         add_adv_field(scale_group, "plot_uncertainty", "Plot Uncertainty:", False, tk.BooleanVar)
         add_adv_field(scale_group, "auto_layout", "Auto-Adjust Layout:", True, tk.BooleanVar)
         add_adv_field(scale_group, "auto_figsize", "Auto-Scale Figure Size:", True, tk.BooleanVar)
         add_adv_field(scale_group, "outer_labels_only", "Outer Axis Labels Only:", True, tk.BooleanVar)
-
         scatter_group = ttk.LabelFrame(adv_frame, text="Measurement Data Scatter Overlay", padding="10")
         scatter_group.grid(row=0, column=1, rowspan=2, sticky=tk.NSEW, padx=(6, 0), pady=(0, 4))
         add_adv_field(scatter_group, "scatter_data", "Scatter-Plot Data:", False, tk.BooleanVar)
@@ -189,9 +161,36 @@ class PlotConfigDialog(tk.Toplevel):
         add_adv_field(scatter_group, "scatter_cmap", "Scatter Colormap:", "plasma", options=COMMON_CMAPS, readonly_options=False)
         add_adv_field(scatter_group, "scatter_edgecolor", "Scatter Edge Color:", "black")
         add_adv_field(scatter_group, "scatter_marker", "Scatter Marker Style:", "o", options=COMMON_MARKERS, readonly_options=False)
-
         self.adv_settings_widgets["scatter_color_mode"].bind("<<ComboboxSelected>>", lambda e: self._update_scatter_color_state())
         self._update_scatter_color_state()
+
+    def _build_normalization_tab(self, notebook: ttk.Notebook) -> None:
+        self.norm_tab = PlotNormalizationTab(
+            notebook, output_col=self.output_col, initial_config=self._initial_norm_cfg,
+            result=self.result, get_opt_output_val=self._get_opt_output_val,
+            on_apply_to_report=self.on_normalization_changed,
+        )
+        notebook.add(self.norm_tab, text="  4. Axis & Plot Normalization  ")
+        self._refresh_norm_axis_labels()
+
+    def _refresh_norm_axis_labels(self) -> None:
+        if self.norm_tab is None: return
+        rmap = {"X-Axis": "x_axis", "Y-Axis": "y_axis", "Row-Axis (P)": "p_axis", "Column-Axis (Q)": "q_axis"}
+        self.norm_tab.refresh_axis_labels({rmap[cfg["role_var"].get()]: col for col, cfg in self.plot_param_configs.items() if cfg["role_var"].get() in rmap})
+
+    def load_normalization_config(self, cfg: PlotNormalizationConfig) -> None:
+        if self.norm_tab is not None: self.norm_tab.load_config(cfg)
+
+    def get_normalization_config(self, strict: bool = True) -> PlotNormalizationConfig:
+        return self.norm_tab.get_config(strict=strict) if self.norm_tab is not None else PlotNormalizationConfig()
+
+    def apply_normalization_to_report(self) -> None:
+        if self.norm_tab is not None: self.norm_tab.apply_to_report()
+
+    def _get_opt_output_val(self) -> Optional[float]:
+        if not self.opt_params_dict or self.result is None or not self.input_cols: return None
+        try: return float(self.result.evaluate_point([self.opt_params_dict.get(c, 0.0) for c in self.input_cols], return_std=False))
+        except Exception: return None
 
     def _reset_plot_axes_to_data(self) -> None:
         for col, param_data in self.plot_param_configs.items():
@@ -248,6 +247,7 @@ class PlotConfigDialog(tk.Toplevel):
             ttk.Entry(input_frame, textvariable=val_var, width=12).pack(side=tk.LEFT)
             ttk.Label(input_frame, text=f"  (Data: {self._get_col_range_str(col)})", style="CardMuted.TLabel").pack(side=tk.LEFT, padx=(6, 0))
             param_data["vars"]["value"] = val_var
+        self._refresh_norm_axis_labels()
 
     def generate_plot(self) -> None:
         config: Dict[str, Any] = {"fixed": []}
@@ -257,6 +257,7 @@ class PlotConfigDialog(tk.Toplevel):
         x_col = y_col = None
 
         try:
+            norm_cfg = self.get_normalization_config(strict=True)
             for idx, col in enumerate(self.input_cols):
                 role = self.plot_param_configs[col]["role_var"].get()
                 vars_dict = self.plot_param_configs[col]["vars"]
@@ -270,14 +271,12 @@ class PlotConfigDialog(tk.Toplevel):
                     p_count += 1
                     vals = [float(v.strip()) for v in vars_dict["values"].get().split(",") if v.strip()]
                     config["p"] = (idx, vals)
-                    p_pre, p_suf = self.p_label_prefix_var.get().strip() or f"{col}=", self.p_label_suffix_var.get().strip()
-                    label_arrays_p = [f"{p_pre}{v}{p_suf}" for v in vals]
+                    label_arrays_p = format_slice_labels(col, vals, self.p_label_prefix_var.get(), self.p_label_suffix_var.get(), norm_cfg, norm_cfg.p_axis, self.df, self.opt_params_dict, "Row-Axis")
                 elif role == "Column-Axis (Q)":
                     q_count += 1
                     vals = [float(v.strip()) for v in vars_dict["values"].get().split(",") if v.strip()]
                     config["q"] = (idx, vals)
-                    q_pre, q_suf = self.q_label_prefix_var.get().strip() or f"{col}=", self.q_label_suffix_var.get().strip()
-                    label_arrays_q = [f"{q_pre}{v}{q_suf}" for v in vals]
+                    label_arrays_q = format_slice_labels(col, vals, self.q_label_prefix_var.get(), self.q_label_suffix_var.get(), norm_cfg, norm_cfg.q_axis, self.df, self.opt_params_dict, "Column-Axis")
                 elif role == "Fixed":
                     config["fixed"].append((idx, float(vars_dict["value"].get())))
 
@@ -296,13 +295,21 @@ class PlotConfigDialog(tk.Toplevel):
 
             plot_settings = {k: var.get() for k, var in self.adv_settings_vars.items()}
             plot_settings["show_plot"] = True
+            plot_settings["normalization"] = norm_cfg.to_dict()
             if plot_settings.get("plot_uncertainty", False) and not getattr(self.result, "supports_uncertainty", False):
                 messagebox.showerror("Error", f"Uncertainty plotting is not supported for {getattr(self.result, 'method', 'this model')}.", parent=self); return
+
+            if self.on_normalization_changed is not None:
+                self.on_normalization_changed(norm_cfg)
 
             if self.on_generate_plot:
                 self.on_generate_plot(config, title, x_label, y_label, label_array, plot_settings)
             else:
-                self.result.visualize_rsm(config, title=title, xlabel=x_label, ylabel=y_label, label_array=label_array, plot_settings=plot_settings, show=True)
+                self.result.visualize_rsm(
+                    config, title=title, xlabel=x_label, ylabel=y_label, label_array=label_array,
+                    plot_settings=plot_settings, show=True,
+                    opt_params_dict=self.opt_params_dict, opt_output_val=self._get_opt_output_val(),
+                )
         except Exception as e:
             messagebox.showerror("Error", f"Invalid plot configuration: {e}", parent=self)
 
@@ -313,20 +320,18 @@ class PlotConfigDialog(tk.Toplevel):
             "roles": {col: {"role": cfg["role_var"].get(), "vars": {k: v.get() for k, v in cfg["vars"].items()}} for col, cfg in self.plot_param_configs.items()},
             "labels": {"plot_title": self.plot_title_var.get(), "x_label": self.x_label_var.get(), "y_label": self.y_label_var.get(), "colorbar_label": self.colorbar_label_var.get(), "p_label_prefix": self.p_label_prefix_var.get(), "p_label_suffix": self.p_label_suffix_var.get(), "q_label_prefix": self.q_label_prefix_var.get(), "q_label_suffix": self.q_label_suffix_var.get()},
             "advanced": {k: v.get() for k, v in self.adv_settings_vars.items() if k != "colorbar_label"},
+            "normalization": self.get_normalization_config(strict=False).to_dict(),
         }
         try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(settings, f, indent=4)
+            with open(filepath, "w", encoding="utf-8") as f: json.dump(settings, f, indent=4)
             messagebox.showinfo("Success", f"Plot settings saved successfully to:\n{filepath}", parent=self)
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save settings: {e}", parent=self)
+        except Exception as e: messagebox.showerror("Error", f"Failed to save settings: {e}", parent=self)
 
     def load_plot_settings(self) -> None:
         filepath = filedialog.askopenfilename(filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")], title="Load Plot Settings", parent=self)
         if not filepath: return
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                settings = json.load(f)
+            with open(filepath, "r", encoding="utf-8") as f: settings = json.load(f)
             labels = settings.get("labels", {})
             for key, var in [("plot_title", self.plot_title_var), ("x_label", self.x_label_var), ("y_label", self.y_label_var), ("colorbar_label", self.colorbar_label_var), ("p_label_prefix", self.p_label_prefix_var), ("p_label_suffix", self.p_label_suffix_var), ("q_label_prefix", self.q_label_prefix_var), ("q_label_suffix", self.q_label_suffix_var)]:
                 if key in labels: var.set(labels[key])
@@ -338,11 +343,9 @@ class PlotConfigDialog(tk.Toplevel):
             self._update_scatter_color_state()
             for col, role_data in settings.get("roles", {}).items():
                 if col in self.plot_param_configs:
-                    cfg = self.plot_param_configs[col]
-                    cfg["role_var"].set(role_data.get("role", "Fixed"))
-                    self._update_plot_role_inputs(col)
+                    cfg = self.plot_param_configs[col]; cfg["role_var"].set(role_data.get("role", "Fixed")); self._update_plot_role_inputs(col)
                     for k, v in role_data.get("vars", {}).items():
                         if k in cfg["vars"]: cfg["vars"][k].set(v)
+            if "normalization" in settings: self.load_normalization_config(PlotNormalizationConfig.from_dict(settings["normalization"]))
             messagebox.showinfo("Success", f"Plot settings loaded successfully from:\n{filepath}", parent=self)
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load settings: {e}", parent=self)
+        except Exception as e: messagebox.showerror("Error", f"Failed to load settings: {e}", parent=self)

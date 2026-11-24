@@ -14,6 +14,12 @@ from super_rsm.common.exceptions import UncertaintyNotSupportedError
 from super_rsm.models.base import SurfaceGridConfig, SurfaceGridResult
 from super_rsm.visualization.contour import MultiContourEngine
 from super_rsm.visualization.grid import GridSampler
+from super_rsm.visualization.normalization import (
+    PlotNormalizationConfig,
+    ResolvedAxisTransform,
+    format_normalized_label,
+    resolve_axis_transform,
+)
 from super_rsm.visualization.settings import PlotSettings
 
 logger = logging.getLogger(__name__)
@@ -37,6 +43,8 @@ class VisualizationService:
         plot_settings: Optional[Union[PlotSettings, Dict[str, Any]]] = None,
         show: bool = False,
         save_path: Optional[str] = None,
+        opt_params_dict: Optional[Dict[str, float]] = None,
+        opt_output_val: Optional[float] = None,
     ) -> Tuple[Any, Any]:
         """
         Visualize fitted RSMResult over multi-dimensional parameter space.
@@ -56,39 +64,46 @@ class VisualizationService:
         model = getattr(result, "model", result)
         grid_result = GridSampler.sample(model, grid_config)
 
-        x_name = xlabel or (
-            result.feature_names[grid_config.x_idx]
-            if hasattr(result, "feature_names") and result.feature_names
-            else "X"
-        )
-        y_name = ylabel or (
-            result.feature_names[grid_config.y_idx]
-            if hasattr(result, "feature_names") and result.feature_names
-            else "Y"
-        )
+        feat_names = getattr(result, "feature_names", None) or []
+        x_col_name = feat_names[grid_config.x_idx] if grid_config.x_idx < len(feat_names) else "X"
+        y_col_name = feat_names[grid_config.y_idx] if grid_config.y_idx < len(feat_names) else "Y"
+        x_name = xlabel or x_col_name
+        y_name = ylabel or y_col_name
+
+        norm_cfg = PlotNormalizationConfig.from_dict(settings.normalization) if settings.normalization else None
+        main_transforms: Optional[Dict[str, Optional[ResolvedAxisTransform]]] = None
+        unc_transforms: Optional[Dict[str, Optional[ResolvedAxisTransform]]] = None
+        if norm_cfg is not None and (norm_cfg.apply_to_contour or norm_cfg.apply_to_uncertainty):
+            resolved = cls._resolve_contour_transforms(
+                norm_cfg, result, grid_config, grid_result, x_col_name, y_col_name, opt_params_dict, opt_output_val
+            )
+            if norm_cfg.apply_to_contour:
+                main_transforms = resolved
+            if norm_cfg.apply_to_uncertainty:
+                unc_transforms = resolved
 
         render_unc = bool(settings.plot_uncertainty and grid_result.U_array)
         ps_main = PlotSettings.from_dict(settings.to_dict())
         if render_unc:
             ps_main.show_plot = False
 
+        main_xlabel = format_normalized_label(x_name, main_transforms.get("x") if main_transforms else None, bool(norm_cfg and norm_cfg.append_unit_suffix))
+        main_ylabel = format_normalized_label(y_name, main_transforms.get("y") if main_transforms else None, bool(norm_cfg and norm_cfg.append_unit_suffix))
+        if ps_main.colorbar_label and main_transforms and norm_cfg and norm_cfg.append_unit_suffix:
+            ps_main.colorbar_label = format_normalized_label(ps_main.colorbar_label, main_transforms.get("z"), True)
+
         fig, axes = MultiContourEngine.render(
-            grid_result=grid_result,
-            settings=ps_main,
-            title=title,
-            xlabel=x_name,
-            ylabel=y_name,
-            label_array=label_array,
-            show=False if render_unc else show,
-            save_path=save_path,
-            render_uncertainty=False,
-            uncertainty_overlay=False,
+            grid_result=grid_result, settings=ps_main, title=title, xlabel=main_xlabel, ylabel=main_ylabel,
+            label_array=label_array, show=False if render_unc else show, save_path=save_path,
+            render_uncertainty=False, uncertainty_overlay=False, axis_transforms=main_transforms,
         )
 
         if render_unc:
             ps_unc = PlotSettings.from_dict(settings.to_dict())
             if ps_unc.colorbar_label:
                 ps_unc.colorbar_label = f"{ps_unc.colorbar_label} (Uncertainty)"
+                if unc_transforms and norm_cfg and norm_cfg.append_unit_suffix:
+                    ps_unc.colorbar_label = format_normalized_label(ps_unc.colorbar_label, unc_transforms.get("z"), True)
             if ps_unc.scatter_vmin is None or ps_unc.scatter_vmax is None:
                 if grid_config.y_scatter is not None and len(grid_config.y_scatter) > 0:
                     s_min, s_max = float(np.min(grid_config.y_scatter)), float(np.max(grid_config.y_scatter))
@@ -97,31 +112,42 @@ class VisualizationService:
                     s_max = max(float(np.max(arr)) for row in grid_result.Z_array for arr in row)
                 if np.isclose(s_min, s_max):
                     s_min, s_max = s_min - 1e-6, s_max + 1e-6
-                ps_unc.scatter_vmin = s_min
-                ps_unc.scatter_vmax = s_max
+                ps_unc.scatter_vmin, ps_unc.scatter_vmax = s_min, s_max
 
-            unc_save_path = (
-                str(Path(save_path).with_name(f"{Path(save_path).stem}_uncertainty{Path(save_path).suffix}"))
-                if save_path
-                else None
-            )
+            unc_xlabel = format_normalized_label(x_name, unc_transforms.get("x") if unc_transforms else None, bool(norm_cfg and norm_cfg.append_unit_suffix))
+            unc_ylabel = format_normalized_label(y_name, unc_transforms.get("y") if unc_transforms else None, bool(norm_cfg and norm_cfg.append_unit_suffix))
+            unc_save_path = str(Path(save_path).with_name(f"{Path(save_path).stem}_uncertainty{Path(save_path).suffix}")) if save_path else None
             unc_title = f"{title} (Uncertainty)" if title else "Uncertainty"
             fig_unc, axes_unc = MultiContourEngine.render(
-                grid_result=grid_result,
-                settings=ps_unc,
-                title=unc_title,
-                xlabel=x_name,
-                ylabel=y_name,
-                label_array=label_array,
-                show=show,
-                save_path=unc_save_path,
-                render_uncertainty=True,
-                uncertainty_overlay=False,
+                grid_result=grid_result, settings=ps_unc, title=unc_title, xlabel=unc_xlabel, ylabel=unc_ylabel,
+                label_array=label_array, show=show, save_path=unc_save_path,
+                render_uncertainty=True, uncertainty_overlay=False, axis_transforms=unc_transforms,
             )
-            fig.uncertainty_figure = fig_unc
-            fig.uncertainty_axes = axes_unc
+            fig.uncertainty_figure, fig.uncertainty_axes = fig_unc, axes_unc
 
         return fig, axes
+
+    @classmethod
+    def _resolve_contour_transforms(
+        cls, norm_cfg: PlotNormalizationConfig, result: Any, grid_config: SurfaceGridConfig,
+        grid_result: SurfaceGridResult, x_col_name: str, y_col_name: str,
+        opt_params_dict: Optional[Dict[str, float]] = None, opt_output_val: Optional[float] = None,
+    ) -> Dict[str, Optional[ResolvedAxisTransform]]:
+        """Resolve X, Y, and Z affine transforms from raw dataset/grid values."""
+        x_parts = [arr for arr in (getattr(result, "X_train", None), getattr(result, "X_test", None)) if arr is not None and len(arr) > 0]
+        X_all = np.vstack(x_parts) if x_parts else None
+        y_parts = [np.asarray(arr, dtype=float).ravel() for arr in (getattr(result, "y_train", None), getattr(result, "y_test", None)) if arr is not None and len(arr) > 0]
+        y_all = np.concatenate(y_parts) if y_parts else None
+
+        x_data = X_all[:, grid_config.x_idx] if (X_all is not None and grid_config.x_idx < X_all.shape[1]) else None
+        y_data = X_all[:, grid_config.y_idx] if (X_all is not None and grid_config.y_idx < X_all.shape[1]) else None
+        z_plot = np.concatenate([np.asarray(arr, dtype=float).ravel() for row in grid_result.Z_array for arr in row])
+
+        return {
+            "x": resolve_axis_transform(norm_cfg.x_axis, x_data, grid_result.X_mesh, opt_params_dict.get(x_col_name) if opt_params_dict else None, f"X-Axis ({x_col_name})"),
+            "y": resolve_axis_transform(norm_cfg.y_axis, y_data, grid_result.Y_mesh, opt_params_dict.get(y_col_name) if opt_params_dict else None, f"Y-Axis ({y_col_name})"),
+            "z": resolve_axis_transform(norm_cfg.z_axis, y_all, z_plot, opt_output_val, "Z-Axis (Output)"),
+        }
 
     @classmethod
     def plot_response_surface(

@@ -163,6 +163,7 @@ def format_full_report_text(
     input_cols: List[str],
     output_col: str,
     last_opt_report_text: str = "",
+    normalization_note: str = "",
 ) -> str:
     """Format complete plain-text diagnostic report for headless inspection."""
     if result is None or not input_cols:
@@ -177,6 +178,8 @@ def format_full_report_text(
         f"Input Factors ({len(input_cols)}): {', '.join(input_cols)}",
         f"Regression Method: {result.method}",
     ]
+    if normalization_note:
+        lines.append(f"Plot Normalization Applied: {normalization_note}")
     if ds is not None:
         split_mode = "Grouped by Unique Input Combinations" if getattr(ds, "split_by_groups", False) else "Random Row Split"
         n_tr, n_te = ds.n_train, ds.n_test
@@ -223,6 +226,7 @@ def format_full_report_markdown(
     input_cols: List[str],
     output_col: str,
     last_opt_report_text: str = "",
+    normalization_note: str = "",
 ) -> str:
     """Format complete Markdown diagnostic report with bold fonts, bullet points, tables, and plot markers."""
     if result is None or not input_cols:
@@ -239,6 +243,8 @@ def format_full_report_markdown(
         f"- **Input Factors ({len(input_cols)})**: {', '.join(f'`{c}`' for c in input_cols)}",
         f"- **Regression Method**: **{result.method}**",
     ]
+    if normalization_note:
+        lines.append(f"- **Plot Normalization Applied**: {normalization_note}")
     if ds is not None:
         split_mode = "Grouped by Unique Input Combinations" if getattr(ds, "split_by_groups", False) else "Random Row Split"
         n_tr, n_te = ds.n_train, ds.n_test

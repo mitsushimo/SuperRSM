@@ -503,5 +503,118 @@ def test_rsm_app_menubar_and_full_project_roundtrip(tmp_path, monkeypatch):
         app2.controller.on_closing()
 
 
+def test_plot_normalization_dialog_report_note_and_persistence(tmp_path):
+    """Verify PlotConfigDialog Tab 4, P/Q label normalization, inline report notice, re-fit preservation, and .rsm save/load."""
+    import tkinter as tk
+    from super_rsm.gui.app import RSMApp
+    from super_rsm.gui.dialogs.plot_config_dialog import PlotConfigDialog
+    from super_rsm.visualization.normalization import AxisNormalizationSpec, PlotNormalizationConfig
+
+    rng = np.random.default_rng(123)
+    temp = rng.uniform(100.0, 300.0, 30)
+    press = rng.uniform(10.0, 50.0, 30)
+    flow = rng.choice([20.0, 40.0, 60.0], size=30)
+    df = pd.DataFrame({
+        "Temp": temp,
+        "Press": press,
+        "Flow": flow,
+        "Yield": 500.0 + 1.0 * temp + 2.0 * press + 0.5 * flow + rng.normal(0.0, 1.0, 30),
+    })
+    csv_path = tmp_path / "prop_data.csv"
+    df.to_csv(csv_path, index=False)
+
+    app = RSMApp(async_tasks=False)
+    try:
+        app.file_path_var.set(str(csv_path))
+        app.load_data(False)
+        app.input_listbox.selection_clear(0, tk.END)
+        for i in (0, 1, 2):
+            app.input_listbox.selection_set(i)
+        app.output_combo.set("Yield")
+        app.on_input_select()
+        app.method_var.set("Polynomial OLS")
+        app.model_view._refresh_metadata_ui()
+        assert app.fit_model(synchronous=True)
+
+        # Open PlotConfigDialog directly on Tab 4 (Normalization)
+        captured = {}
+        dlg = PlotConfigDialog(
+            app,
+            app.state.current_input_cols,
+            app.state.current_output_col,
+            app.state.result,
+            app.state.df,
+            app.state.opt_params_dict,
+            on_generate_plot=lambda cfg, title, xl, yl, lbls, ps: captured.update(
+                {"config": cfg, "labels": lbls, "plot_settings": ps}
+            ),
+            normalization_config=app.state.plot_normalization,
+            on_normalization_changed=app._on_plot_normalization_changed,
+            initial_tab=3,
+        )
+        try:
+            assert dlg.notebook.index(dlg.notebook.select()) == 3
+
+            # Assign Flow to Row-Axis (P) with values 20, 40, 60
+            dlg.plot_param_configs["Flow"]["role_var"].set("Row-Axis (P)")
+            dlg._update_plot_role_inputs("Flow")
+            dlg.plot_param_configs["Flow"]["vars"]["values"].set("20, 40, 60")
+
+            # Enable X, P, and Z normalization + Inline Parity Plot
+            dlg.load_normalization_config(
+                PlotNormalizationConfig(
+                    apply_to_contour=True,
+                    apply_to_uncertainty=True,
+                    apply_to_parity=True,
+                    x_axis=AxisNormalizationSpec(enabled=True, method="minmax_01", reference="dataset"),
+                    p_axis=AxisNormalizationSpec(enabled=True, method="minmax_01", reference="plot_range"),
+                    z_axis=AxisNormalizationSpec(enabled=True, method="coded_11", reference="dataset"),
+                )
+            )
+            dlg.apply_normalization_to_report()
+
+            # Inline report text must state that normalization was applied
+            md_text = app.results_view.report_viewer.get_markdown_text()
+            assert "Plot Normalization Applied" in md_text
+            assert "Inline Parity Plot" in md_text
+            assert "raw units" in md_text
+
+            # Inline parity figure must have coded [-1, 1] limits
+            parity_fig = app.results_view.report_viewer._figures.get("parity")
+            assert parity_fig is not None
+            assert -1.3 <= parity_fig.axes[0].get_xlim()[0] <= -0.9
+            assert 0.9 <= parity_fig.axes[0].get_xlim()[1] <= 1.3
+
+            # Trigger Generate Plot and verify raw P values in config vs normalized P labels
+            dlg.generate_plot()
+            assert captured["config"]["p"][1] == [20.0, 40.0, 60.0]
+            assert captured["labels"] == [["Flow=0"], ["Flow=0.5"], ["Flow=1"]]
+            assert captured["plot_settings"]["normalization"]["x_axis"]["enabled"] is True
+        finally:
+            dlg.destroy()
+
+        # Re-fit model and verify normalization settings are preserved
+        assert app.fit_model(synchronous=True)
+        assert app.state.plot_normalization.apply_to_parity is True
+        assert app.state.plot_normalization.z_axis.enabled is True
+        assert "Plot Normalization Applied" in app.results_view.report_viewer.get_markdown_text()
+
+        # Save & load .rsm project and verify normalization persists
+        rsm_path = tmp_path / "norm_project.rsm"
+        assert app.save_project(filepath=str(rsm_path))
+    finally:
+        app.controller.on_closing()
+
+    app2 = RSMApp(async_tasks=False)
+    try:
+        assert app2.load_project(filepath=str(rsm_path))
+        assert app2.state.plot_normalization.apply_to_parity is True
+        assert app2.state.plot_normalization.z_axis.method == "coded_11"
+        assert "Plot Normalization Applied" in app2.results_view.report_viewer.get_markdown_text()
+    finally:
+        app2.controller.on_closing()
+
+
+
 
 
